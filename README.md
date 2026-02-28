@@ -66,7 +66,7 @@ A Dockerized web application for team leaders to track procurement files assigne
 
 ```bash
 # Clone the repository
-git clone https://github.com/amipabu/file_tracking.git
+git clone https://github.com/Pasmwezi/procurement_tracking_system.git
 cd file_tracking
 
 # Build and start
