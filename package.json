@@ -1,5 +1,5 @@
 {
-  "name": "procurement-file-tracker",
+  "name": "prcurement-triage-tracker",
   "version": "1.0.0",
   "description": "Procurement file tracking system for contracting officers",
   "main": "server.js",
