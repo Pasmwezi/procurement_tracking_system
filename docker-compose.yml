@@ -6,11 +6,24 @@ services:
       POSTGRES_USER: tracker
       POSTGRES_PASSWORD: tracker_pass
       POSTGRES_DB: file_tracking
+      TZ: America/Halifax
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U tracker -d file_tracking" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - app-network
 
   app:
     build: .
@@ -20,8 +33,27 @@ services:
     environment:
       DATABASE_URL: postgres://tracker:tracker_pass@db:5432/file_tracking
       NODE_ENV: production
+      TZ: America/Halifax
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+    networks:
+      - app-network
 
 volumes:
   pgdata:
+
+
+networks:
+  app-network:
+    driver: bridge

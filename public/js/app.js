@@ -1,1322 +1,1935 @@
-/* ==============================================
-   Procurement File Tracker — Frontend App
-   ============================================== */
-
+// ===== Utility =====
+const $ = sel => document.querySelector(sel);
+const $$ = sel => document.querySelectorAll(sel);
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
 const API = '';
+let token = localStorage.getItem('token');
+let currentUser = null; // { id, email, displayName, role, teamId, teamName, passwordChanged }
+let teamLeaderViewScope = 'me';
 
-// ─── State ────────────────────────────────────
-let currentPage = 'dashboard';
-let authToken = localStorage.getItem('authToken');
-let currentUser = null;
+// ===== Team Toggle Handlers =====
+function setupTeamToggles() {
+    const switchScope = (scope) => {
+        teamLeaderViewScope = scope;
+        // Update UI Dashboard
+        $('#btnDashTeamMe').classList.toggle('active', scope === 'me');
+        $('#btnDashTeamAll').classList.toggle('active', scope === 'all');
+        // Update UI Officers
+        $('#btnOfficerTeamMe').classList.toggle('active', scope === 'me');
+        $('#btnOfficerTeamAll').classList.toggle('active', scope === 'all');
 
-// ─── DOM Refs ─────────────────────────────────
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => document.querySelectorAll(sel);
+        // Refresh active views
+        const activePage = document.querySelector('.page.active');
+        const activePageId = activePage ? activePage.id.replace('page', '').toLowerCase() : '';
+        if (activePageId === 'dashboard') loadDashboard();
+        if (activePageId === 'officers') loadOfficers();
+    };
 
-// ─── Auth Fetch Wrapper ───────────────────────
-async function authFetch(url, options = {}) {
-    if (!options.headers) options.headers = {};
-    if (authToken) {
-        options.headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    const res = await fetch(url, options);
-    if (res.status === 401) {
-        // Token expired or invalid — force logout
-        logout();
-        throw new Error('Session expired. Please sign in again.');
-    }
-    return res;
+    $('#btnDashTeamMe').addEventListener('click', () => switchScope('me'));
+    $('#btnDashTeamAll').addEventListener('click', () => switchScope('all'));
+    $('#btnOfficerTeamMe').addEventListener('click', () => switchScope('me'));
+    $('#btnOfficerTeamAll').addEventListener('click', () => switchScope('all'));
 }
 
-// ─── Init ─────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-    initAuth();
-    initNavigation();
-    initModals();
-    initForms();
-    initActions();
-    initUserMenu();
+function authHeaders() { return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }; }
+
+async function api(path, options = {}) {
+    const res = await fetch(API + path, { ...options, headers: { ...authHeaders(), ...options.headers } });
+    if (res.status === 401) { logout(); return null; }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+}
+
+function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function initials(name) {
+    if (!name) return 'U';
+    return name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+}
+
+function statusChip(status, isOverdue) {
+    if (status === 'Completed') return '<span class="badge badge-completed">Completed</span>';
+    if (status === 'Cancelled') return '<span class="badge badge-cancelled">Cancelled</span>';
+    if (isOverdue) return '<span class="badge badge-overdue">Overdue</span>';
+    return '<span class="badge badge-active">Active</span>';
+}
+
+function timeAgo(dateString) {
+    if (!dateString) return '';
+    const past = new Date(dateString);
+    const now = new Date();
+    const diffDays = Math.floor((now - past) / 86400000);
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 0) return `In ${Math.abs(diffDays)} days`;
+    return `${diffDays} days ago`;
+}
+
+// ===== Auth =====
+function logout() {
+    token = null;
+    currentUser = null;
+    localStorage.removeItem('token');
+    showLogin();
+}
+
+function showLogin() {
+    $('#loginScreen').classList.add('active');
+    document.body.classList.remove('authenticated');
+}
+
+async function showApp(userData) {
+    currentUser = userData;
+    token = localStorage.getItem('token');
+    $('#loginScreen').classList.remove('active');
+    document.body.classList.add('authenticated');
+
+    console.log('showApp called with user:', currentUser);
+
+    // Update user UI
+    const initials = currentUser.displayName.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+    const roleLbl = { admin: 'App Admin', team_leader: 'Team Leader', officer: 'Officer' }[currentUser.role] || currentUser.role;
+    $('#sidebarAvatar').textContent = initials;
+    $('#sidebarUserName').textContent = currentUser.displayName;
+    $('#sidebarUserRole').textContent = roleLbl;
+    $('#headerAvatar').textContent = initials;
+    $('#dropdownName').textContent = currentUser.displayName;
+    $('#dropdownRole').textContent = roleLbl;
+
+    // Role-based nav visibility
+    applyRoleVisibility();
+
+    // Initialize Team Leader View Toggles
+    if (currentUser.role === 'team_leader') setupTeamToggles();
+
+    // Navigate to first visible page
+    const visibleNavs = [...$$('.nav-item')].filter(el => el.style.display !== 'none');
+    console.log('Visible nav items:', visibleNavs.map(el => el.dataset.page));
+
+    if (visibleNavs.length > 0) {
+        console.log('Navigating to first visible page:', visibleNavs[0].dataset.page);
+        navigateTo(visibleNavs[0].dataset.page);
+    } else {
+        console.warn('No visible nav items found for role:', currentUser.role);
+    }
+
+    // Check forced password change
+    console.log('Password changed?', currentUser.passwordChanged);
+    if (currentUser.passwordChanged === false) { // Explicit check
+        console.log('Forcing password change...');
+        forcePasswordChange();
+    }
+}
+
+function applyRoleVisibility() {
+    console.log('Applying role visibility for:', currentUser.role);
+    $$('[data-roles]').forEach(el => {
+        const roles = el.dataset.roles.split(' ');
+        const isVisible = roles.includes(currentUser.role);
+        el.style.display = isVisible ? '' : 'none';
+        // console.log(`Element ${el.tagName}.${el.className} [data-roles="${el.dataset.roles}"] -> ${isVisible ? 'VISIBLE' : 'HIDDEN'}`);
+    });
+}
+
+// ===== Login Form =====
+const loginForm = $('#formLogin');
+console.log('Login form found:', loginForm);
+
+if (loginForm) {
+    loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        console.log('Login submitted');
+        const email = $('#loginEmail').value.trim();
+        const password = $('#loginPassword').value;
+        const errDiv = $('#loginError');
+
+        if (!errDiv) {
+            console.error('Login error div not found!');
+            alert('Internal Error: Missing UI element #loginError');
+            return;
+        }
+
+        errDiv.style.display = 'none';
+        const btn = $('#loginBtn');
+        btn.disabled = true;
+        btn.textContent = 'Signing in...';
+
+        try {
+            console.log('Sending login request for:', email);
+            const res = await fetch(API + '/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+
+            const data = await res.json();
+            console.log('Login response:', res.status, data);
+
+            if (!res.ok) {
+                errDiv.textContent = data.error || 'Login failed';
+                errDiv.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Sign In';
+                return;
+            }
+
+            token = data.token;
+            localStorage.setItem('token', token);
+            console.log('Login successful, calling showApp');
+
+            // IMPORTANT: await showApp so errors are caught by catch block
+            try {
+                await showApp(data.user);
+            } catch (uiErr) {
+                console.error('showApp failed:', uiErr);
+                throw new Error('UI Initialization Failed: ' + uiErr.message);
+            }
+        } catch (err) {
+            console.error('Login error:', err);
+            errDiv.textContent = 'Error: ' + err.message;
+            errDiv.style.display = 'block';
+            btn.disabled = false;
+            btn.textContent = 'Sign In';
+
+            // If internal error, show alert too
+            if (err.message.includes('UI Initialization Failed')) {
+                alert('Login successful but UI crashed. Check console logs.');
+            }
+        }
+    });
+} else {
+    console.error('Login Form #formLogin not found in DOM');
+}
+
+// ===== Init on load =====
+async function init() {
+    if (!token) { showLogin(); return; }
+    try {
+        const me = await api('/api/auth/me');
+        if (!me) return;
+        showApp(me);
+    } catch {
+        logout();
+    }
+}
+
+// ===== Navigation =====
+const pageTitles = {
+    dashboard: 'Dashboard',
+    triage: 'File Triage',
+    files: 'Procurement Files',
+    officers: 'Contracting Officers',
+    notifications: 'Notifications',
+    admin: 'Administration'
+};
+
+function navigateTo(page) {
+    $$('.page').forEach(p => p.classList.remove('active'));
+    $$('.nav-item').forEach(n => n.classList.remove('active'));
+    const pageEl = $(`#page${page.charAt(0).toUpperCase() + page.slice(1)}`);
+    const navEl = $(`.nav-item[data-page="${page}"]`);
+    if (pageEl) pageEl.classList.add('active');
+    if (navEl) navEl.classList.add('active');
+    if (page === 'dashboard' && currentUser) {
+        const roleLbl = { admin: 'Admin', team_leader: 'Team Leader', officer: 'Officer' }[currentUser.role] || currentUser.role;
+        $('#pageTitle').innerHTML = `Dashboard <span class="title-role-badge">${roleLbl}</span>`;
+    } else {
+        $('#pageTitle').textContent = pageTitles[page] || page;
+    }
+
+    // Load page data
+    if (page === 'dashboard') loadDashboard();
+    else if (page === 'triage') loadTriage();
+    else if (page === 'files') loadFiles();
+    else if (page === 'officers') loadOfficers();
+    else if (page === 'notifications') loadNotifications();
+    else if (page === 'admin') loadAdmin();
+}
+
+$$('.nav-item').forEach(item => {
+    item.addEventListener('click', () => navigateTo(item.dataset.page));
 });
 
-// ─── Navigation ───────────────────────────────
-function initNavigation() {
-    $$('.nav-item').forEach(item => {
-        item.addEventListener('click', () => {
-            const page = item.dataset.page;
-            loadPage(page);
-        });
-    });
+// ===== Modal =====
+function openModal(id) {
+    console.log('openModal called for:', id);
+    const els = $$('.modal');
+    console.log(`Found ${els.length} modals to hide`);
+    els.forEach(m => m.style.display = 'none');
 
-    $('#btnHamburger').addEventListener('click', () => {
-        $('#sidebar').classList.toggle('open');
-    });
-
-    $('#btnHeaderNotif').addEventListener('click', () => {
-        loadPage('notifications');
-    });
-}
-
-function loadPage(page) {
-    currentPage = page;
-
-    $$('.nav-item').forEach(n => n.classList.remove('active'));
-    $(`.nav-item[data-page="${page}"]`).classList.add('active');
-
-    $$('.page').forEach(p => p.classList.remove('active'));
-
-    const pageMap = {
-        dashboard: 'pageDashboard',
-        files: 'pageFiles',
-        officers: 'pageOfficers',
-        notifications: 'pageNotifications'
-    };
-
-    const titles = {
-        dashboard: 'Dashboard',
-        files: 'Procurement Files',
-        officers: 'Contracting Officers',
-        notifications: 'Notifications'
-    };
-
-    $(`#${pageMap[page]}`).classList.add('active');
-    $('#pageTitle').textContent = titles[page];
-
-    // Load data
-    switch (page) {
-        case 'dashboard': loadDashboard(); break;
-        case 'files': loadFiles(); break;
-        case 'officers': loadOfficers(); break;
-        case 'notifications': loadNotifications(); break;
+    const target = $(`#${id}`);
+    if (target) {
+        console.log('Showing target modal:', id);
+        target.style.display = 'block';
+    } else {
+        console.error('Target modal not found:', id);
+        alert('Internal Error: Modal ' + id + ' not found');
+        return;
     }
 
-    // Close sidebar on mobile
-    $('#sidebar').classList.remove('open');
+    console.log('Activating overlay');
+    const overlay = $('#modalOverlay');
+    if (overlay) {
+        overlay.classList.add('active');
+    } else {
+        console.error('Overlay not found!');
+        alert('Internal Error: Overlay not found');
+    }
 }
 
-// ─── Dashboard ────────────────────────────────
+function closeModal() {
+    if ($('#modalOverlay').classList.contains('locked')) return;
+    $('#modalOverlay').classList.remove('active');
+    $$('.modal').forEach(m => m.style.display = 'none');
+}
+
+$$('[data-close]').forEach(btn => btn.addEventListener('click', closeModal));
+$('#modalOverlay').addEventListener('click', (e) => {
+    if (e.target === $('#modalOverlay')) closeModal();
+});
+
+function escHtml(str) {
+    const p = document.createElement('p');
+    p.textContent = str;
+    return p.innerHTML;
+}
+
+function adjustForWeekend(date) {
+    const d = new Date(date);
+    const day = d.getDay();
+    if (day === 6) d.setDate(d.getDate() + 2); // Saturday -> Monday
+    else if (day === 0) d.setDate(d.getDate() + 1); // Sunday -> Monday
+    return d;
+}
+
+// ===== Toast =====
+function showToast(msg, type = 'success') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = msg;
+    $('#toastContainer').appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3500);
+}
+
+// ===== Notification Badge =====
+async function updateNotifBadge() {
+    try {
+        const data = await api('/api/notifications/count');
+        if (!data) return;
+        const c = parseInt(data.count);
+        const badge = $('#headerNotifBadge');
+        const navBadge = $('#navNotifBadge');
+        if (c > 0) {
+            badge.textContent = c;
+            badge.style.display = '';
+            navBadge.textContent = c;
+            navBadge.style.display = '';
+        } else {
+            badge.style.display = 'none';
+            navBadge.style.display = 'none';
+        }
+    } catch { }
+}
+
+// ===== Dashboard =====
 async function loadDashboard() {
     try {
-        const res = await authFetch(`${API}/api/files/stats/summary`);
-        const stats = await res.json();
+        const url = '/api/files/stats/summary' + (currentUser.role === 'team_leader' && teamLeaderViewScope === 'me' ? '?team_id=me' : '');
+        const stats = await api(url);
+        if (!stats) return;
+        $('#statTotal').textContent = stats.total_files || 0;
+        $('#statActive').textContent = stats.active_files || 0;
+        $('#statOverdue').textContent = stats.overdue_files || 0;
+        $('#statCompleted').textContent = stats.completed_files || 0;
 
-        const total = parseInt(stats.total_files) || 0;
-        const active = parseInt(stats.active_files) || 0;
-        const overdue = parseInt(stats.overdue_files) || 0;
-        const completed = parseInt(stats.completed_files) || 0;
+        // Triage stats for team_leader dashboard card
+        if (currentUser.role === 'team_leader') {
+            try {
+                const ts = await api('/api/triage/stats');
+                if (ts) {
+                    const pending = (parseInt(ts.triaged) || 0) + (parseInt(ts.missing_docs) || 0);
+                    $('#statPendingTriage').textContent = pending;
+                    const missingEl = $('#statTriageMissing');
+                    if (parseInt(ts.missing_docs) > 0) {
+                        missingEl.textContent = `${ts.missing_docs} missing docs`;
+                    } else {
+                        missingEl.textContent = '';
+                    }
+                }
+            } catch (e) { /* triage stats optional */ }
+        }
 
-        // Animated stat values
-        animateValue('statTotal', total);
-        animateValue('statActive', active);
-        animateValue('statOverdue', overdue);
-        animateValue('statCompleted', completed);
-
-        // Stat percentage subtexts
-        setStatPercent('statTotal', null);
-        setStatPercent('statActive', total > 0 ? Math.round((active / total) * 100) + '% of total' : null);
-        setStatPercent('statOverdue', overdue > 0 ? 'Needs attention' : 'All on track');
-        setStatPercent('statCompleted', total > 0 ? Math.round((completed / total) * 100) + '% completion rate' : null);
-
-        // ── Officer workload chart ──
-        const chartEl = $('#officerChart');
+        // Officer chart (only for team_leader)
+        const chart = $('#officerChart');
         if (stats.by_officer && stats.by_officer.length > 0) {
-            const maxCount = Math.max(...stats.by_officer.map(o => parseInt(o.file_count) || 1), 1);
-            chartEl.innerHTML = stats.by_officer.map(o => {
-                const ac = parseInt(o.active_count) || 0;
-                const tot = parseInt(o.file_count) || 0;
+            const max = Math.max(...stats.by_officer.map(o => parseInt(o.active_count) || 0));
+            chart.innerHTML = stats.by_officer.map(o => {
+                const count = parseInt(o.active_count) || 0;
+                const width = max ? (count / max * 100) : 0;
                 return `
                 <div class="officer-bar">
                     <div class="officer-bar-info">
-                        <span class="officer-bar-avatar">${initials(o.name)}</span>
-                        <span class="officer-bar-name" title="${escHtml(o.name)}">${escHtml(o.name)}</span>
+                        <div class="officer-bar-avatar">${initials(o.officer_name)}</div>
+                        <span class="officer-bar-name">${escHtml(o.officer_name)}</span>
                     </div>
                     <div class="officer-bar-track">
-                        <div class="officer-bar-fill" style="width: ${(tot / maxCount) * 100}%">
-                            <span class="officer-bar-inner-label">${tot}</span>
+                        <div class="officer-bar-fill" style="width:${width}%">
+                            <span class="officer-bar-inner-label">${count}</span>
                         </div>
                     </div>
-                    <span class="officer-bar-detail">${ac} active</span>
+                    <span class="officer-bar-detail">${count} active</span>
                 </div>
-            `;
+                `;
             }).join('');
         } else {
-            chartEl.innerHTML = '<p class="empty-state-text">No officers assigned yet.</p>';
+            chart.innerHTML = '<p class="empty-hint">No officer data</p>';
         }
 
-        // ── Process distribution chart ──
-        const processEl = $('#processChart');
-        const processColors = {
-            'Sole Source': { bg: 'rgba(245,158,11,0.15)', fg: '#fbbf24', bar: 'linear-gradient(90deg, #f59e0b, #fbbf24)' },
-            'Two Phase Solic': { bg: 'rgba(139,92,246,0.15)', fg: '#a78bfa', bar: 'linear-gradient(90deg, #7c3aed, #a78bfa)' },
-            'One Phase Solic': { bg: 'rgba(59,130,246,0.15)', fg: '#60a5fa', bar: 'linear-gradient(90deg, #3b82f6, #60a5fa)' },
-            'Service Solic Above TA': { bg: 'rgba(236,72,153,0.15)', fg: '#f472b6', bar: 'linear-gradient(90deg, #ec4899, #f472b6)' },
-            'Service Solic Under TA': { bg: 'rgba(16,185,129,0.15)', fg: '#34d399', bar: 'linear-gradient(90deg, #10b981, #34d399)' },
-        };
+        // Process chart
+        const pChart = $('#processChart');
         if (stats.by_process && stats.by_process.length > 0) {
-            const maxP = Math.max(...stats.by_process.map(p => parseInt(p.file_count) || 1), 1);
-            processEl.innerHTML = stats.by_process.map(p => {
-                const c = processColors[p.process_name] || { bg: 'var(--accent-glow)', fg: 'var(--accent-light)', bar: 'linear-gradient(90deg, var(--accent), var(--accent-light))' };
-                const ac = parseInt(p.active_count) || 0;
-                const tot = parseInt(p.file_count) || 0;
-                const pct = total > 0 ? Math.round((tot / total) * 100) : 0;
+            const total = stats.by_process.reduce((sum, p) => sum + parseInt(p.file_count), 0);
+            const pMax = Math.max(...stats.by_process.map(p => parseInt(p.file_count)));
+
+            pChart.innerHTML = stats.by_process.map(p => {
+                const count = parseInt(p.file_count);
+                const activeCount = parseInt(p.active_count) || 0;
+                const pct = total ? Math.round((count / total) * 100) : 0;
+                const width = pMax ? (count / pMax * 100) : 0;
                 return `
                 <div class="process-bar">
                     <div class="process-bar-header">
-                        <span class="process-bar-badge" style="background:${c.bg};color:${c.fg}">${escHtml(p.process_name)}</span>
-                        <span class="process-bar-pct">${pct}%</span>
+                        <span class="process-bar-badge process-${p.process_name}">${p.process_name.replace(/_/g, ' ')}</span>
                     </div>
                     <div class="process-bar-track">
-                        <div class="process-bar-fill" style="width:${(tot / maxP) * 100}%;background:${c.bar}"></div>
+                        <div class="process-bar-fill process-${p.process_name}" style="width:${width}%">
+                            <span class="process-bar-pct">${pct}%</span>
+                        </div>
                     </div>
                     <div class="process-bar-footer">
-                        <span>${tot} file${tot !== 1 ? 's' : ''}</span>
-                        <span>${ac} active</span>
+                        <span>${count} files</span>
+                        <span>${activeCount} active</span>
                     </div>
                 </div>
-            `;
+                `;
             }).join('');
         } else {
-            processEl.innerHTML = '<p class="empty-state-text">No files yet.</p>';
+            pChart.innerHTML = '<p class="empty-hint">No data</p>';
         }
 
-        // ── Upcoming deadlines ──
-        const deadlineEl = $('#upcomingDeadlines');
+        // Upcoming deadlines
+        const deadlines = $('#upcomingDeadlines');
         if (stats.upcoming_deadlines && stats.upcoming_deadlines.length > 0) {
-            deadlineEl.innerHTML = stats.upcoming_deadlines.map(d => {
-                const daysLeft = Math.floor(parseFloat(d.days_remaining));
-                let urgencyClass = 'deadline-safe';
-                let urgencyLabel = `${daysLeft} days left`;
-                if (daysLeft < 0) { urgencyClass = 'deadline-overdue'; urgencyLabel = `${Math.abs(daysLeft)} days overdue`; }
-                else if (daysLeft <= 2) { urgencyClass = 'deadline-critical'; urgencyLabel = daysLeft === 0 ? 'Due today' : `${daysLeft} day${daysLeft > 1 ? 's' : ''} left`; }
-                else if (daysLeft <= 5) { urgencyClass = 'deadline-warning'; }
+            deadlines.innerHTML = stats.upcoming_deadlines.map(d => {
+                const startStr = d.step_started_at.includes('T') ? d.step_started_at : `${d.step_started_at}T12:00:00`;
+                let deadline = new Date(startStr);
+                deadline.setDate(deadline.getDate() + d.sla_days);
+                deadline = adjustForWeekend(deadline);
+                const now = new Date();
+                const daysLeft = Math.ceil((deadline - now) / 86400000);
+
+                let statusClass = 'deadline-safe';
+                let labelText = `${daysLeft} DAYS REMAINING`;
+                if (daysLeft < 0) {
+                    statusClass = 'deadline-overdue';
+                    labelText = `${Math.abs(daysLeft)} DAYS OVERDUE`;
+                } else if (daysLeft <= 2) {
+                    statusClass = 'deadline-critical';
+                } else if (daysLeft <= 5) {
+                    statusClass = 'deadline-warning';
+                }
+
                 return `
-                <div class="deadline-item ${urgencyClass}">
+                <div class="deadline-item ${statusClass}">
                     <div class="deadline-left">
                         <div class="deadline-urgency">
-                            <span class="deadline-dot"></span>
-                            <span class="deadline-days">${urgencyLabel}</span>
+                            <div class="deadline-dot"></div>
+                            <span class="deadline-days">${labelText}</span>
                         </div>
-                        <div class="deadline-pr">${escHtml(d.pr_number)}</div>
+                        <div class="deadline-pr">${d.pr_number}</div>
                         <div class="deadline-meta">${escHtml(d.step_name)} · ${escHtml(d.officer_name)}</div>
                     </div>
                     <div class="deadline-right">
-                        <div class="deadline-date">${formatDate(d.deadline)}</div>
+                        <div class="deadline-date">${deadline.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
                     </div>
-                </div>
-            `;
+                </div>`;
             }).join('');
         } else {
-            deadlineEl.innerHTML = '<p class="empty-state-text">No upcoming deadlines.</p>';
+            deadlines.innerHTML = '<p class="empty-hint">No upcoming deadlines</p>';
         }
 
-        // ── Recent files ──
-        const filesRes = await authFetch(`${API}/api/files`);
-        const files = await filesRes.json();
-        const recentEl = $('#recentFiles');
-        if (files.length > 0) {
-            recentEl.innerHTML = files.slice(0, 5).map(f => `
-                <div class="recent-file-item" onclick="loadPage('files'); setTimeout(() => viewFileDetail(${f.id}), 300);" style="cursor:pointer">
+        // Recent files
+        const recent = $('#recentFiles');
+        const files = await api('/api/files?status=Active');
+        if (files && files.length > 0) {
+            recent.innerHTML = files.slice(0, 5).map(f => `
+                <div class="recent-file-item" style="cursor:pointer" onclick="viewFileDetail(${f.id})">
                     <div class="recent-file-left">
-                        <span class="recent-file-avatar">${initials(f.officer_name)}</span>
+                        <div class="recent-file-avatar">${initials(f.officer_name)}</div>
                         <div class="recent-file-info">
-                            <div class="recent-file-pr">${escHtml(f.pr_number)}</div>
+                            <div class="recent-file-pr">${f.pr_number}</div>
                             <div class="recent-file-title">${escHtml(f.title)}</div>
                         </div>
                     </div>
                     <div class="recent-file-right">
-                        <span class="process-tag process-${(f.process_name || '').toLowerCase()}" style="font-size:0.65rem;padding:2px 7px">${formatProcess(f.process_name)}</span>
-                        ${statusChip(f)}
+                        <span class="process-tag process-${f.process_name}">${f.process_name.replace(/_/g, ' ')}</span>
+                        ${statusChip(f.status, f.is_overdue)}
                     </div>
                 </div>
             `).join('');
         } else {
-            recentEl.innerHTML = '<p class="empty-state-text">No files yet.</p>';
+            recent.innerHTML = '<p class="empty-hint">No active files</p>';
         }
+
+        updateNotifBadge();
     } catch (err) {
-        console.error('Dashboard load error:', err);
+        console.error('Dashboard error:', err);
     }
 }
 
-function animateValue(elementId, targetValue) {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    const duration = 600;
-    const start = performance.now();
-    const initial = parseInt(el.textContent) || 0;
-    function tick(now) {
-        const progress = Math.min((now - start) / duration, 1);
-        const ease = 1 - Math.pow(1 - progress, 3);
-        el.textContent = Math.round(initial + (targetValue - initial) * ease);
-        if (progress < 1) requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
-}
+// ===== Files =====
+let allOfficers = [];
+let allProcesses = [];
 
-function setStatPercent(elementId, text) {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    let sub = el.parentElement.querySelector('.stat-sub');
-    if (!text) { if (sub) sub.remove(); return; }
-    if (!sub) {
-        sub = document.createElement('span');
-        sub.className = 'stat-sub';
-        el.parentElement.appendChild(sub);
-    }
-    sub.textContent = text;
-}
-
-// ─── Files ────────────────────────────────────
 async function loadFiles() {
     try {
-        const params = new URLSearchParams();
-        const officer = $('#filterOfficer').value;
-        const process = $('#filterProcess').value;
-        const status = $('#filterStatus').value;
-        if (officer) params.set('officer_id', officer);
-        if (process) params.set('process_name', process);
-        if (status) params.set('status', status);
-
-        const res = await authFetch(`${API}/api/files?${params}`);
-        const files = await res.json();
-
-        const tbody = $('#filesBody');
-        const empty = $('#filesEmpty');
-
-        if (files.length === 0) {
-            tbody.innerHTML = '';
-            empty.style.display = 'block';
-            return;
+        // Load officer filter
+        if (currentUser.role === 'team_leader') {
+            allOfficers = await api('/api/officers') || [];
+            const sel = $('#filterOfficer');
+            sel.innerHTML = '<option value="team_me">My Team</option>' +
+                '<option value="">All Officers</option>' +
+                allOfficers.map(o => `<option value="${o.id}">${o.name}${o.team_name ? ' (' + o.team_name + ')' : ''}</option>`).join('');
         }
 
-        empty.style.display = 'none';
-        tbody.innerHTML = files.map(f => {
-            const stepNum = parseInt(f.step_order) || 1;
-            const totalSteps = parseInt(f.total_steps) || 1;
-            const stepPct = Math.round((stepNum / totalSteps) * 100);
-            const isOverdue = f.is_overdue;
-            const daysAgo = Math.floor((Date.now() - new Date(f.created_at).getTime()) / (1000 * 60 * 60 * 24));
-            const agoText = daysAgo === 0 ? 'Today' : daysAgo === 1 ? '1 day ago' : `${daysAgo} days ago`;
+        // Load process filter
+        allProcesses = await api('/api/processes') || [];
+        const pSel = $('#filterProcess');
+        pSel.innerHTML = '<option value="">All Processes</option>' +
+            allProcesses.map(p => `<option value="${p.name}">${p.name.replace(/_/g, ' ')}</option>`).join('');
 
-            return `
-            <tr class="${isOverdue ? 'row-overdue' : ''} ${f.status === 'Completed' ? 'row-completed' : ''}">
-                <td><span class="pr-number">${escHtml(f.pr_number)}</span></td>
-                <td><span class="file-title-cell">${escHtml(f.title)}</span></td>
-                <td><span class="process-tag process-${(f.process_name || '').toLowerCase()}">${formatProcess(f.process_name)}</span></td>
-                <td>
-                    <div class="officer-cell">
-                        <span class="officer-cell-avatar">${initials(f.officer_name)}</span>
-                        <span>${escHtml(f.officer_name)}</span>
-                    </div>
-                </td>
-                <td>
-                    <div class="date-cell">
-                        <span class="date-cell-main">${formatDateLong(f.created_at)}</span>
-                        <span class="date-cell-ago">${agoText}</span>
-                    </div>
-                </td>
-                <td>
-                    <div class="step-cell">
-                        <span class="step-cell-name">${escHtml(f.current_step_name || '—')}</span>
-                        <div class="step-progress-wrap">
-                            <div class="step-progress-bar">
-                                <div class="step-progress-fill ${isOverdue ? 'overdue' : f.status === 'Completed' ? 'completed' : ''}" style="width:${stepPct}%"></div>
-                            </div>
-                            <span class="step-progress-label">${stepNum}/${totalSteps}</span>
-                        </div>
-                    </div>
-                </td>
-                <td>${statusChip(f)}</td>
-                <td>
-                    <div class="actions-cell">
-                        <button class="btn btn-sm btn-secondary btn-icon-text" onclick="viewFileDetail(${f.id})" title="View Details">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                            View
-                        </button>
-                        ${f.status === 'Active' ? `<button class="btn btn-sm btn-success btn-icon-text" onclick="advanceFile(${f.id})" title="Advance Step">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                            Advance
-                        </button>` : ''}
-                    </div>
-                </td>
-            </tr>
-        `;
-        }).join('');
-
-        // Populate filters
-        await populateFilters();
+        await refreshFilesTable();
     } catch (err) {
         console.error('Files load error:', err);
     }
 }
 
-async function populateFilters() {
-    // Officers filter
-    const officerSel = $('#filterOfficer');
-    if (officerSel.options.length <= 1) {
-        const res = await authFetch(`${API}/api/officers`);
-        const officers = await res.json();
-        officers.forEach(o => {
-            const opt = document.createElement('option');
-            opt.value = o.id;
-            opt.textContent = o.name;
-            officerSel.appendChild(opt);
-        });
+async function refreshFilesTable() {
+    const params = new URLSearchParams();
+    const officer = $('#filterOfficer').value;
+    const process = $('#filterProcess').value;
+    const status = $('#filterStatus').value;
+
+    if (officer === 'team_me' && currentUser.role === 'team_leader') {
+        params.set('team_id', 'me');
+    } else if (officer && officer !== 'team_me') {
+        params.set('officer_id', officer);
     }
 
-    // Process filter
-    const procSel = $('#filterProcess');
-    if (procSel.options.length <= 1) {
-        const res = await authFetch(`${API}/api/processes`);
-        const procs = await res.json();
-        procs.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.name;
-            opt.textContent = formatProcess(p.name);
-            procSel.appendChild(opt);
-        });
+    if (process) params.set('process_name', process);
+    if (status) params.set('status', status);
+
+    const files = await api(`/api/files?${params}`);
+    if (!files) return;
+
+    const tbody = $('#filesBody');
+    const empty = $('#filesEmpty');
+    if (files.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = 'flex';
+        return;
     }
+    empty.style.display = 'none';
+
+    tbody.innerHTML = files.map(f => {
+        const rowCls = f.status === 'Completed' ? 'row-completed' : f.status === 'Cancelled' ? 'row-cancelled' : f.is_overdue ? 'row-overdue' : 'row-active';
+        const statusDotCls = f.status === 'Completed' ? 'status-dot-completed' : f.status === 'Cancelled' ? 'status-dot-cancelled' : f.is_overdue ? 'status-dot-overdue' : 'status-dot-active';
+        const statusLbl = f.status === 'Completed' ? 'Completed' : f.status === 'Cancelled' ? 'Cancelled' : f.is_overdue ? 'Overdue' : 'Active';
+        const canAdvance = currentUser.role === 'team_leader' && f.status === 'Active';
+
+        const dateObj = new Date(f.created_at);
+        const dateStr = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+        const relTime = timeAgo(f.created_at);
+
+        const progressPct = f.total_steps ? Math.round((f.step_order / f.total_steps) * 100) : 0;
+
+        let dueDateHtml = '<span style="color:var(--text-muted)">—</span>';
+        if (f.status === 'Active' && f.step_due_date) {
+            const dueObj = new Date(f.step_due_date);
+            const dueStr = dueObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const dueRel = timeAgo(f.step_due_date);
+            const dueColor = f.is_overdue ? 'var(--danger)' : 'var(--text-muted)';
+            const fw = f.is_overdue ? '600' : 'normal';
+            dueDateHtml = `
+            <div class="date-cell">
+                <div class="date-main">${dueStr}</div>
+                <div class="date-sub" style="color: ${dueColor}; font-weight: ${fw}">${dueRel}</div>
+            </div>`;
+        } else if (f.status === 'Completed') {
+            dueDateHtml = '<span style="color:var(--text-muted)">Completed</span>';
+        } else if (f.status === 'Cancelled') {
+            dueDateHtml = '<span style="color:var(--text-muted)">Cancelled</span>';
+        }
+
+        return `<tr class="${rowCls}">
+            <td><span class="pr-number">${f.pr_number}</span></td>
+            <td><div class="file-title-cell">${escHtml(f.title)}</div></td>
+            <td><span class="process-tag process-${f.process_name}">${f.process_name.replace(/_/g, ' ')}</span></td>
+            <td>
+                <div class="officer-identity">
+                    <div class="officer-avatar-sm">${initials(f.officer_name)}</div>
+                    <span>${escHtml(f.officer_name)}</span>
+                </div>
+            </td>
+            <td>
+                <div class="date-cell">
+                    <div class="date-main">${dateStr}</div>
+                    <div class="date-sub">${relTime}</div>
+                </div>
+            </td>
+            <td>
+                <div class="step-cell">
+                    <div class="step-name">${escHtml(f.current_step_name) || '—'}</div>
+                    <div class="step-progress-wrapper">
+                        <div class="step-progress-bar" style="width: ${progressPct}%"></div>
+                    </div>
+                    <div class="step-count">${f.step_order || 0}/${f.total_steps || 0}</div>
+                </div>
+            </td>
+            <td>${dueDateHtml}</td>
+            <td>
+                <div class="status-indicator">
+                    <div class="status-dot ${statusDotCls}"></div>
+                    <span>${statusLbl}</span>
+                </div>
+            </td>
+            <td>
+                <div class="btn-action-group">
+                    <button class="btn-action btn-view" onclick="viewFileDetail(${f.id})">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        View
+                    </button>
+                    ${canAdvance ? `<button class="btn-action btn-advance" onclick="advanceFile(${f.id})">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        Advance
+                    </button>` : ''}
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
 }
 
-// Filter event listeners
-document.addEventListener('DOMContentLoaded', () => {
-    ['filterOfficer', 'filterProcess', 'filterStatus'].forEach(id => {
-        document.getElementById(id)?.addEventListener('change', () => loadFiles());
-    });
-});
-
-// ─── File Detail ──────────────────────────────
+// File detail
 async function viewFileDetail(id) {
     try {
-        const res = await authFetch(`${API}/api/files/${id}`);
-        const file = await res.json();
+        const f = await api(`/api/files/${id}`);
+        if (!f) return;
 
-        $('#detailTitle').textContent = `${file.pr_number} — ${file.title}`;
+        $('#detailTitle').innerHTML = `<span class="pr-accent">${f.pr_number}</span> &mdash; ${escHtml(f.title)}`;
 
-        const body = $('#detailBody');
-        body.innerHTML = `
-            <div class="detail-header">
-                <div class="detail-field">
-                    <span class="detail-field-label">PR Number</span>
-                    <span class="detail-field-value">${escHtml(file.pr_number)}</span>
-                </div>
-                <div class="detail-field">
-                    <span class="detail-field-label">Process</span>
-                    <span class="detail-field-value">${formatProcess(file.process_name)}</span>
-                </div>
-                <div class="detail-field">
-                    <span class="detail-field-label">Officer</span>
-                    <span class="detail-field-value">${escHtml(file.officer_name)}</span>
-                </div>
-                <div class="detail-field">
-                    <span class="detail-field-label">Status</span>
-                    <span class="detail-field-value">${statusChip(file)}</span>
-                </div>
-                <div class="detail-field">
-                    <span class="detail-field-label">Created</span>
-                    <span class="detail-field-value">${formatDate(file.created_at)}</span>
-                </div>
-                <div class="detail-field">
-                    <span class="detail-field-label">Current Step</span>
-                    <span class="detail-field-value">${escHtml(file.current_step_name || '—')}</span>
-                </div>
+        const statusDotCls = f.status === 'Completed' ? 'status-dot-completed' : f.status === 'Cancelled' ? 'status-dot-cancelled' : f.is_overdue ? 'status-dot-overdue' : 'status-dot-active';
+        const statusLbl = f.status === 'Completed' ? 'Completed' : f.status === 'Cancelled' ? 'Cancelled' : f.is_overdue ? 'Overdue' : 'Active';
+        const dateStr = new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+        let html = `
+        <div class="modal-meta-grid">
+            <div class="meta-box">
+                <span class="meta-label">PR NUMBER</span>
+                <span class="meta-value">${f.pr_number}</span>
             </div>
+            <div class="meta-box">
+                <span class="meta-label">PROCESS</span>
+                <span class="meta-value">${f.process_name.replace(/_/g, ' ')}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">OFFICER</span>
+                <span class="meta-value">${escHtml(f.officer_name)}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">STATUS</span>
+                <span class="meta-value">
+                    <div class="status-indicator" style="background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 4px;">
+                        <div class="status-dot ${statusDotCls}"></div>
+                        <span>${statusLbl}</span>
+                    </div>
+                </span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">CREATED</span>
+                <span class="meta-value">${dateStr}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">CURRENT STEP</span>
+                <span class="meta-value">${escHtml(f.current_step_name) || 'None'}</span>
+            </div>
+        </div>
+        
+        <h3 class="timeline-title">Step Timeline</h3>
+        <div class="timeline-vertical">`;
 
-            <h3 style="font-size:0.95rem;margin-bottom:16px;">Step Timeline</h3>
-            <div class="timeline">
-                ${file.steps.map(step => {
-            const log = file.step_log.find(l => l.step_id === step.id);
-            const isCurrent = step.id === file.current_step_id;
-            const isCompleted = log && log.completed_at;
-            const isOverdue = isCurrent && file.is_overdue;
+        let canAdvanceCurrent = false;
 
-            let statusClass = '';
-            if (isCompleted) statusClass = 'completed';
-            else if (isOverdue) statusClass = 'overdue';
-            else if (isCurrent) statusClass = 'current';
+        for (const step of f.steps) {
+            const log = f.step_log.find(l => l.step_id === step.id);
+            let stateCls = 'timeline-pending';
+            let dateInfo = '';
 
-            let slaHtml = '';
-            if (step.sla_days > 0) {
-                if (isCompleted) {
-                    slaHtml = log.sla_met
-                        ? `<span class="timeline-step-sla sla-met">SLA Met</span>`
-                        : `<span class="timeline-step-sla sla-overdue">SLA Missed</span>`;
-                } else if (isCurrent) {
-                    slaHtml = isOverdue
-                        ? `<span class="timeline-step-sla sla-overdue">Overdue</span>`
-                        : `<span class="timeline-step-sla sla-pending">In Progress</span>`;
-                }
+            if (log && log.completed_at) {
+                stateCls = 'timeline-completed';
+                const sDate = new Date(log.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const dDate = new Date(log.completed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                dateInfo = `Started: ${sDate} &nbsp; Done: ${dDate}`;
+            } else if (log && !log.completed_at) {
+                stateCls = 'timeline-active';
+                const sDate = new Date(log.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                dateInfo = `Started: ${sDate} &nbsp; <span class="${f.is_overdue ? 'text-danger' : 'text-accent'}">${f.is_overdue ? 'Overdue' : 'In Progress'}</span>`;
+                if (currentUser.role === 'team_leader') canAdvanceCurrent = true;
             }
 
-            // Comment section for steps that have a log entry
             let commentHtml = '';
             if (log) {
-                const existingComment = log.comment || '';
+                const isTeamLeader = currentUser.role === 'team_leader';
                 commentHtml = `
-                    <div class="step-comment-section">
-                        <div class="step-comment-header">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                            <span>Comment</span>
-                        </div>
-                        <textarea class="step-comment-input" 
-                            id="comment-${log.id}" 
-                            placeholder="Add a comment about SLA status..."
-                            data-file-id="${file.id}" 
-                            data-log-id="${log.id}">${escHtml(existingComment)}</textarea>
-                        <button class="btn btn-sm btn-secondary step-comment-save" 
-                            onclick="saveStepComment(${file.id}, ${log.id})">Save Comment</button>
+                <div class="timeline-comment-box">
+                    <div class="comment-icon">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg> 
+                        COMMENT
                     </div>
-                `;
+                    <textarea class="comment-input" placeholder="${isTeamLeader ? 'Add a comment about SLA status...' : 'No comment provided.'}" id="stepComment_${log.id}" ${!isTeamLeader ? 'readonly' : ''}>${log.comment || ''}</textarea>
+                    ${isTeamLeader ? `<button class="btn-save-comment" onclick="saveStepComment(${f.id}, ${log.id})">Save Comment</button>` : ''}
+                </div>`;
             }
 
-            return `
-                        <div class="timeline-step ${statusClass}">
-                            <div class="timeline-dot"></div>
-                            <div class="timeline-step-name">${escHtml(step.step_name)}</div>
-                            <div class="timeline-step-meta">
-                                <span>SLA: ${step.sla_days} day${step.sla_days !== 1 ? 's' : ''}</span>
-                                <span>Cumulative: ${step.cum_days} days</span>
-                                ${log && log.started_at ? `<span>Started: ${formatDate(log.started_at)}</span>` : ''}
-                                ${isCompleted ? `<span>Done: ${formatDate(log.completed_at)}</span>` : ''}
-                                ${slaHtml}
-                            </div>
-                            ${commentHtml}
-                        </div>
-                    `;
-        }).join('')}
-            </div>
-
-            ${file.status === 'Active' ? `
-                <div class="advance-section">
-                    <div class="form-group">
-                        <label for="advanceComment">Comment (optional)</label>
-                        <textarea id="advanceComment" class="text-input" rows="2" placeholder="Add a comment about this step before advancing..."></textarea>
+            html += `
+            <div class="timeline-item ${stateCls}">
+                <div class="timeline-dot"></div>
+                <div class="timeline-content">
+                    <div class="timeline-header">
+                        <span class="step-name">${escHtml(step.step_name)}</span>
                     </div>
-                    <button class="btn btn-success" onclick="advanceFileWithComment(${file.id})">
-                        Advance to Next Step
-                    </button>
+                    <div class="timeline-meta">
+                        <span>SLA: ${step.sla_days} days</span>
+                        <span>Cumulative: ${step.cum_days} days</span>
+                        <span class="timeline-dates">${dateInfo}</span>
+                    </div>
+                    ${commentHtml}
                 </div>
-            ` : ''}
-        `;
+            </div>`;
+        }
 
+        html += `</div>`;
+
+        if (canAdvanceCurrent) {
+            html += `
+            <div class="modal-advance-area">
+                <button class="btn btn-primary btn-full" onclick="advanceFile(${f.id})">Advance to Next Step</button>
+            </div>`;
+        }
+        if (currentUser.role === 'team_leader' && f.status === 'Active') {
+            html += `
+            <div class="modal-advance-area" style="margin-top: 10px;">
+                <button class="btn btn-danger btn-full" onclick="cancelFile(${f.id})">Cancel File</button>
+            </div>`;
+        }
+
+        $('#detailBody').innerHTML = html;
         openModal('modalFileDetail');
     } catch (err) {
-        showToast('Failed to load file details', 'error');
-    }
-}
-
-async function advanceFile(id) {
-    try {
-        const res = await authFetch(`${API}/api/files/${id}/advance`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
-        });
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error);
-        }
-        showToast('File advanced to next step', 'success');
-        if (currentPage === 'files') loadFiles();
-        else if (currentPage === 'dashboard') loadDashboard();
-    } catch (err) {
-        showToast(err.message || 'Failed to advance', 'error');
-    }
-}
-
-async function advanceFileWithComment(id) {
-    const commentEl = document.getElementById('advanceComment');
-    const comment = commentEl ? commentEl.value.trim() : '';
-    try {
-        const res = await authFetch(`${API}/api/files/${id}/advance`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ comment: comment || null })
-        });
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error);
-        }
-        showToast('File advanced to next step', 'success');
-        closeModal();
-        if (currentPage === 'files') loadFiles();
-        else if (currentPage === 'dashboard') loadDashboard();
-    } catch (err) {
-        showToast(err.message || 'Failed to advance', 'error');
+        showToast(err.message, 'error');
     }
 }
 
 async function saveStepComment(fileId, logId) {
-    const textarea = document.getElementById(`comment-${logId}`);
-    if (!textarea) return;
-    const comment = textarea.value.trim();
+    const input = $(`#stepComment_${logId}`);
     try {
-        const res = await authFetch(`${API}/api/files/${fileId}/steps/${logId}/comment`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ comment })
+        await api(`/api/files/${fileId}/steps/${logId}/comment`, {
+            method: 'PUT', body: JSON.stringify({ comment: input.value })
         });
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error);
-        }
-        showToast('Comment saved', 'success');
-    } catch (err) {
-        showToast(err.message || 'Failed to save comment', 'error');
-    }
+        showToast('Comment saved');
+        viewFileDetail(fileId);
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-// ─── Officers ─────────────────────────────────
+async function advanceFile(id) {
+    try {
+        await api(`/api/files/${id}/advance`, { method: 'PUT', body: JSON.stringify({}) });
+        showToast('File advanced to next step');
+        closeModal();
+        refreshFilesTable();
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function cancelFile(id) {
+    const reason = prompt("Enter cancellation reason:");
+    if (!reason || !reason.trim()) {
+        showToast('Cancellation requires a reason', 'info');
+        return;
+    }
+    try {
+        await api(`/api/files/${id}/cancel`, { method: 'PUT', body: JSON.stringify({ reason: reason.trim() }) });
+        showToast('File cancelled successfully');
+        closeModal();
+        refreshFilesTable();
+        // Since dashboard metrics may have changed
+        const activePage = document.querySelector('.page.active');
+        const activePageId = activePage ? activePage.id.replace('page', '').toLowerCase() : '';
+        if (activePageId === 'dashboard') loadDashboard();
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
+// Event: filter changes
+['filterOfficer', 'filterProcess', 'filterStatus'].forEach(id => {
+    $(`#${id}`).addEventListener('change', refreshFilesTable);
+});
+
+// New file button
+$('#btnNewFile').addEventListener('click', async () => {
+    // Populate process select
+    const procs = await api('/api/processes');
+    const pSel = $('#inputProcess');
+    pSel.innerHTML = procs.map(p => `<option value="${p.name}">${p.name.replace(/_/g, ' ')}</option>`).join('');
+
+    // Populate officer select
+    const officers = await api('/api/officers');
+    const oSel = $('#inputOfficer');
+    oSel.innerHTML = officers.map(o => `<option value="${o.id}">${o.name}${o.team_name ? ' (' + o.team_name + ')' : ''}</option>`).join('');
+
+    // Populate step select based on process
+    async function updateSteps() {
+        const pName = pSel.value;
+        const steps = procs.find(p => p.name === pName);
+        if (pName) {
+            const stepsData = await api(`/api/processes/${pName}/steps`);
+            const sSel = $('#inputCurrentStep');
+            sSel.innerHTML = '<option value="">Step 1 (start from beginning)</option>' +
+                stepsData.filter(s => s.step_name !== 'Completed').map(s =>
+                    `<option value="${s.step_order}">Step ${s.step_order}: ${s.step_name}</option>`
+                ).join('');
+        }
+    }
+    pSel.addEventListener('change', updateSteps);
+    updateSteps();
+
+    openModal('modalNewFile');
+});
+
+// Submit new file
+$('#formNewFile').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+        await api('/api/files', {
+            method: 'POST',
+            body: JSON.stringify({
+                pr_number: $('#inputPR').value,
+                title: $('#inputTitle').value,
+                process_name: $('#inputProcess').value,
+                officer_id: parseInt($('#inputOfficer').value),
+                assigned_date: $('#inputAssignedDate').value || undefined,
+                current_step_order: $('#inputCurrentStep').value || undefined
+            })
+        });
+        closeModal();
+        e.target.reset();
+        showToast('File created');
+        refreshFilesTable();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+// ===== Officers =====
 async function loadOfficers() {
     try {
-        const res = await authFetch(`${API}/api/officers`);
-        const officers = await res.json();
-
+        const url = '/api/officers' + (currentUser.role === 'team_leader' && teamLeaderViewScope === 'me' ? '?team_id=me' : '');
+        const officers = await api(url);
+        if (!officers) return;
         const grid = $('#officersGrid');
         const empty = $('#officersEmpty');
 
         if (officers.length === 0) {
             grid.innerHTML = '';
-            empty.style.display = 'block';
+            empty.style.display = 'flex';
             return;
         }
-
         empty.style.display = 'none';
+
         grid.innerHTML = officers.map(o => {
-            const hasFiles = parseInt(o.file_count) > 0;
-            const ac = parseInt(o.active_count) || 0;
-            const comp = parseInt(o.completed_count) || 0;
-            const total = parseInt(o.file_count) || 0;
-            const workloadPct = total > 0 ? Math.round((ac / total) * 100) : 0;
-            return `
-            <div class="officer-card ${hasFiles ? 'officer-card-active' : ''}">
-                <div class="officer-card-top">
-                    <div class="officer-card-identity">
-                        <div class="officer-avatar-lg">
-                            ${initials(o.name)}
-                            ${ac > 0 ? '<span class="officer-status-dot"></span>' : ''}
-                        </div>
-                        <div>
-                            <div class="officer-name">${escHtml(o.name)}</div>
-                            <div class="officer-email">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-                                ${escHtml(o.email)}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="officer-card-actions">
-                        ${hasFiles ? `
-                            <button class="btn btn-sm btn-transfer btn-icon-text" onclick="openTransferModal(${o.id}, '${escHtml(o.name)}', ${o.file_count})">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
-                                Transfer
-                            </button>
-                        ` : `
-                            <button class="btn btn-sm btn-danger btn-icon-text" onclick="deleteOfficer(${o.id}, '${escHtml(o.name)}')">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                                Remove
-                            </button>
-                        `}
+            const initials = o.name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+            return `<div class="officer-card">
+                <div class="officer-card-header">
+                    <div class="officer-avatar">${initials}</div>
+                    <div class="officer-info">
+                        <h3>${o.name}</h3>
+                        <span class="officer-email">${o.email}</span>
+                        ${o.team_name ? `<span class="officer-team">${o.team_name}</span>` : ''}
                     </div>
                 </div>
-                ${total > 0 ? `
-                <div class="officer-workload">
-                    <div class="officer-workload-bar">
-                        <div class="officer-workload-fill" style="width:${workloadPct}%"></div>
-                    </div>
-                    <span class="officer-workload-label">${workloadPct}% active</span>
-                </div>
-                ` : ''}
                 <div class="officer-stats">
                     <div class="officer-stat">
-                        <span class="officer-stat-val officer-stat-total">${total}</span>
-                        <span class="officer-stat-lbl">Total</span>
+                        <span class="officer-stat-value">${o.file_count || 0}</span>
+                        <span class="officer-stat-label">Total</span>
                     </div>
                     <div class="officer-stat">
-                        <span class="officer-stat-val officer-stat-active">${ac}</span>
-                        <span class="officer-stat-lbl">Active</span>
+                        <span class="officer-stat-value">${o.active_count || 0}</span>
+                        <span class="officer-stat-label">Active</span>
                     </div>
                     <div class="officer-stat">
-                        <span class="officer-stat-val officer-stat-completed">${comp}</span>
-                        <span class="officer-stat-lbl">Completed</span>
+                        <span class="officer-stat-value">${o.completed_count || 0}</span>
+                        <span class="officer-stat-label">Done</span>
                     </div>
                 </div>
-            </div>
-        `;
+                <div class="officer-card-actions">
+                    <button class="btn btn-sm btn-secondary" onclick="openTransfer(${o.id}, '${o.name}')">Transfer</button>
+                    ${parseInt(o.file_count) === 0 && currentUser.role === 'team_leader' ? `<button class="btn btn-sm btn-danger" onclick="deleteOfficer(${o.id})">Remove</button>` : ''}
+                </div>
+            </div>`;
         }).join('');
     } catch (err) {
         console.error('Officers load error:', err);
     }
 }
 
-async function deleteOfficer(id, name) {
-    if (!confirm(`Remove officer "${name}"?`)) return;
+// New Officer
+$('#btnNewOfficer').addEventListener('click', () => openModal('modalNewOfficer'));
+$('#formNewOfficer').addEventListener('submit', async (e) => {
+    e.preventDefault();
     try {
-        const res = await authFetch(`${API}/api/officers/${id}`, { method: 'DELETE' });
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error);
-        }
-        showToast('Officer removed', 'success');
+        await api('/api/officers', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: $('#inputOfficerName').value,
+                email: $('#inputOfficerEmail').value
+            })
+        });
+        closeModal();
+        e.target.reset();
+        showToast('Officer added');
         loadOfficers();
-    } catch (err) {
-        showToast(err.message, 'error');
-    }
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+async function deleteOfficer(id) {
+    if (!confirm('Remove this officer?')) return;
+    try {
+        await api(`/api/officers/${id}`, { method: 'DELETE' });
+        showToast('Officer removed');
+        loadOfficers();
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-// ─── File Transfer ────────────────────────────
-let transferFromId = null;
+// Transfer
+async function openTransfer(officerId, officerName) {
+    try {
+        const files = await api(`/api/files?officer_id=${officerId}&status=Active`);
+        if (!files || files.length === 0) {
+            showToast('No active files to transfer', 'info');
+            return;
+        }
+        const officers = await api('/api/officers');
+        const otherOfficers = officers.filter(o => o.id !== officerId);
 
-async function openTransferModal(fromId, fromName, fileCount) {
-    transferFromId = fromId;
-
-    // Load other officers for the dropdowns
-    const offRes = await authFetch(`${API}/api/officers`);
-    const officers = await offRes.json();
-    const otherOfficers = officers.filter(o => o.id !== fromId);
-
-    if (otherOfficers.length === 0) {
-        showToast('No other officers available to transfer to. Add a new officer first.', 'error');
-        return;
-    }
-
-    // Load active files for this officer
-    const filesRes = await authFetch(`${API}/api/files?officer_id=${fromId}&status=Active`);
-    const files = await filesRes.json();
-
-    // Build officer options HTML (reused per-file)
-    const optionsHtml = '<option value="">— Keep —</option>' +
-        otherOfficers.map(o => `<option value="${o.id}">${escHtml(o.name)}</option>`).join('');
-
-    // Populate transfer info
-    $('#transferInfo').innerHTML = `
-        Transferring files from <strong>${escHtml(fromName)}</strong>. 
-        Select a target officer for each file, or leave as <em>— Keep —</em> to skip.
-    `;
-
-    // Show file list with per-file dropdowns
-    const listEl = $('#transferFileList');
-    if (files.length > 0) {
-        listEl.innerHTML = files.map(f => `
-            <div class="transfer-file-item">
+        $('#transferInfo').innerHTML = `<p>Transfer active files from <strong>${officerName}</strong> to another officer.</p>`;
+        $('#transferFileList').innerHTML = files.map(f => `
+            <div class="transfer-file-item" data-file-id="${f.id}">
                 <div class="transfer-file-info">
-                    <span class="transfer-file-pr">${escHtml(f.pr_number)}</span>
-                    <span class="transfer-file-title">${escHtml(f.title)}</span>
-                    <span class="transfer-file-process">${formatProcess(f.process_name)}</span>
+                    <strong>${f.pr_number}</strong> — ${f.title}
                 </div>
-                <select class="select-input transfer-file-select" data-file-id="${f.id}">
-                    ${optionsHtml}
+                <select class="select-input transfer-target">
+                    ${otherOfficers.map(o => `<option value="${o.id}">${o.name}</option>`).join('')}
                 </select>
             </div>
         `).join('');
-    } else {
-        listEl.innerHTML = '<div class="transfer-empty">No active files to transfer.</div>';
-    }
 
-    // Show the transfer overlay
-    $('#transferOverlay').classList.add('active');
+        $('#transferOverlay').classList.add('active');
+
+        // Confirm transfer
+        const confirmHandler = async () => {
+            const transfers = [...$$('.transfer-file-item')].map(item => ({
+                file_id: parseInt(item.dataset.fileId),
+                to_officer_id: parseInt(item.querySelector('.transfer-target').value)
+            }));
+            try {
+                await api(`/api/officers/${officerId}/transfer`, {
+                    method: 'PUT', body: JSON.stringify({ transfers })
+                });
+                $('#transferOverlay').classList.remove('active');
+                showToast('Files transferred');
+                loadOfficers();
+                $('#btnConfirmTransfer').removeEventListener('click', confirmHandler);
+            } catch (err) { showToast(err.message, 'error'); }
+        };
+        $('#btnConfirmTransfer').onclick = confirmHandler;
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-function closeTransferModal() {
-    $('#transferOverlay').classList.remove('active');
-    transferFromId = null;
-}
+$('#btnCloseTransfer').addEventListener('click', () => $('#transferOverlay').classList.remove('active'));
+$('#btnCancelTransfer').addEventListener('click', () => $('#transferOverlay').classList.remove('active'));
 
-function setAllTransferDropdowns() {
-    // Helper: set all file dropdowns to the same officer
-    const selects = $$('.transfer-file-select');
-    const firstVal = selects.length > 0 ? selects[0].value : '';
-    selects.forEach(s => s.value = firstVal);
-}
-
-async function confirmTransfer() {
-    // Collect per-file assignments
-    const selects = $$('.transfer-file-select');
-    const transfers = [];
-    selects.forEach(sel => {
-        const fileId = parseInt(sel.dataset.fileId);
-        const toOfficerId = sel.value ? parseInt(sel.value) : null;
-        if (toOfficerId) {
-            transfers.push({ file_id: fileId, to_officer_id: toOfficerId });
-        }
-    });
-
-    if (transfers.length === 0) {
-        showToast('Select at least one target officer for a file', 'error');
-        return;
-    }
-
-    try {
-        const res = await authFetch(`${API}/api/officers/${transferFromId}/transfer`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ transfers })
-        });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error);
-        }
-
-        const data = await res.json();
-        const count = data.transferred_count;
-
-        showToast(`${count} file${count !== 1 ? 's' : ''} transferred successfully`, 'success');
-
-        // Send email notification per target officer
-        for (const group of data.grouped_transfers) {
-            if (group.to_officer && group.to_officer.email && group.files.length > 0) {
-                sendFileTransferEmail(
-                    group.to_officer.name,
-                    group.to_officer.email,
-                    data.from_officer.name,
-                    group.files
-                );
-            }
-        }
-
-        closeTransferModal();
-        loadOfficers();
-        if (currentPage === 'files') loadFiles();
-        if (currentPage === 'dashboard') loadDashboard();
-    } catch (err) {
-        showToast(err.message || 'Transfer failed', 'error');
-    }
-}
-
-function sendFileTransferEmail(toName, toEmail, fromName, files) {
-    const fileList = files.map(f => `  • ${f.pr_number} — ${f.title} (${f.process_name.replace(/_/g, ' ')})`).join('\n');
-
-    const subject = `Procurement Files Transferred to You from ${fromName}`;
-    const body = `Dear ${toName},
-
-${files.length} procurement file${files.length !== 1 ? 's have' : ' has'} been transferred to you from ${fromName}. Please find the details below:
-
-─────────────────────────────
-${fileList}
-─────────────────────────────
-
-Please log in to the FileTracker system to review and continue processing these files.
-
-Thank you,
-Procurement File Tracking System`;
-
-    sendEmail({ to: toEmail, subject, body });
-}
-
-// ─── Notifications ────────────────────────────
+// ===== Notifications =====
 async function loadNotifications() {
     try {
-        const res = await authFetch(`${API}/api/notifications`);
-        const notifs = await res.json();
-
+        const notifs = await api('/api/notifications');
+        if (!notifs) return;
         const list = $('#notificationsList');
         const empty = $('#notifsEmpty');
+        const summary = $('#notifSummaryText');
 
         if (notifs.length === 0) {
             list.innerHTML = '';
-            empty.style.display = 'block';
+            empty.style.display = 'flex';
+            if (summary) summary.textContent = 'All clear! No active alerts.';
             return;
         }
-
         empty.style.display = 'none';
-        list.innerHTML = notifs.map(n => `
-            <div class="notif-card ${n.is_read ? 'read' : 'unread'}">
-                <div class="notif-icon">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+
+        const unreadCount = notifs.filter(n => !n.is_read).length;
+        if (summary) {
+            summary.textContent = unreadCount > 0
+                ? `You have ${unreadCount} unread alert${unreadCount === 1 ? '' : 's'}.`
+                : 'All alerts caught up.';
+        }
+
+        list.innerHTML = notifs.map(n => {
+            const isUnread = !n.is_read;
+            const isOverdue = n.message.toLowerCase().includes('overdue');
+            const statusClass = isOverdue ? 'notif-status-warning' : 'notif-status-info';
+            const icon = isOverdue
+                ? `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`
+                : `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`;
+
+            return `
+            <div class="notif-card ${isUnread ? 'unread' : ''} ${statusClass}" onclick="markRead(${n.id}, this)">
+                <div class="notif-icon-wrap">
+                    ${icon}
                 </div>
-                <div class="notif-content">
+                <div class="notif-details">
                     <div class="notif-message">${escHtml(n.message)}</div>
                     <div class="notif-meta">
-                        <span>${escHtml(n.officer_name)}</span>
-                        <span>${formatDate(n.created_at)}</span>
+                        <div class="notif-time">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                            ${timeAgo(n.created_at)}
+                        </div>
+                        ${isUnread ? '<div class="unread-dot"></div>' : ''}
                     </div>
                 </div>
-                <div class="notif-actions">
-                    ${!n.is_read ? `<button class="btn btn-sm btn-secondary" onclick="markRead(${n.id})">Mark Read</button>` : ''}
-                </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
+
+        updateNotifBadge();
     } catch (err) {
         console.error('Notifications load error:', err);
     }
 }
 
-async function markRead(id) {
+async function markRead(id, el) {
     try {
-        await authFetch(`${API}/api/notifications/${id}/read`, { method: 'PUT' });
+        await api(`/api/notifications/${id}/read`, { method: 'PUT' });
+        el.classList.remove('unread');
+        updateNotifBadge();
+    } catch { }
+}
+
+$('#btnReadAll').addEventListener('click', async () => {
+    try {
+        await api('/api/notifications/read-all', { method: 'PUT' });
+        showToast('All marked as read');
         loadNotifications();
-        pollNotifications();
-    } catch (err) {
-        showToast('Failed to mark read', 'error');
-    }
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+// ===== Admin Panel =====
+let adminUsers = [];
+let adminTeams = [];
+
+async function loadAdmin() {
+    await loadAdminUsers();
+    await loadAdminTeams();
+    await loadAdminProcesses();
+
+    // Populate team filter
+    const sel = $('#adminFilterTeam');
+    sel.innerHTML = '<option value="">All Teams</option>' +
+        adminTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
 }
 
-async function pollNotifications() {
+async function loadAdminUsers() {
     try {
-        const res = await authFetch(`${API}/api/notifications/count`);
-        const { count } = await res.json();
-        const badge = $('#headerNotifBadge');
-        const navBadge = $('#navNotifBadge');
-        if (count > 0) {
-            badge.textContent = count;
-            badge.style.display = 'flex';
-            navBadge.textContent = count;
-            navBadge.style.display = 'inline-flex';
+        adminUsers = await api('/api/admin/users') || [];
+        renderAdminUsers();
+    } catch (err) { console.error('Admin users error:', err); }
+}
+
+function renderAdminUsers() {
+    const roleFilter = $('#adminFilterRole').value;
+    const teamFilter = $('#adminFilterTeam').value;
+    let filtered = adminUsers;
+    if (roleFilter) filtered = filtered.filter(u => u.role === roleFilter);
+    if (teamFilter) filtered = filtered.filter(u => String(u.team_id) === teamFilter);
+
+    const tbody = $('#usersBody');
+    tbody.innerHTML = filtered.map(u => {
+        const roleLbl = { admin: 'Admin', team_leader: 'Team Leader', officer: 'Officer' }[u.role] || u.role;
+        const statusCls = u.is_active ? 'badge-active' : 'badge-inactive';
+        const statusLbl = u.is_active ? 'Active' : 'Inactive';
+        return `<tr>
+            <td><strong>${u.display_name}</strong></td>
+            <td>${u.email}</td>
+            <td><span class="badge badge-role-${u.role}">${roleLbl}</span></td>
+            <td>${u.team_name || '—'}</td>
+            <td>${u.file_count || 0} (${u.active_count || 0} active)</td>
+            <td><span class="badge ${statusCls}">${statusLbl}</span></td>
+            <td>
+                ${u.role !== 'admin' ? `<button class="btn-icon" title="Edit" onclick="editUser(${u.id})">✏️</button>` : ''}
+                ${u.role !== 'admin' ? `<button class="btn-icon" title="Reset password" onclick="resetUserPassword(${u.id}, '${u.display_name.replace(/'/g, "\\'")}')">🔑</button>` : ''}
+                ${u.role !== 'admin' && u.is_active ? `<button class="btn-icon" title="Deactivate" onclick="deactivateUser(${u.id})">🚫</button>` : ''}
+                ${u.role !== 'admin' && !u.is_active ? `<button class="btn-icon" title="Activate" onclick="activateUser(${u.id})">✅</button>` : ''}
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+$('#adminFilterRole').addEventListener('change', renderAdminUsers);
+$('#adminFilterTeam').addEventListener('change', renderAdminUsers);
+
+// Admin tabs
+$$('.admin-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        $$('.admin-tab').forEach(t => t.classList.remove('active'));
+        $$('.admin-tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        $(`#adminTab${tab.dataset.adminTab.charAt(0).toUpperCase() + tab.dataset.adminTab.slice(1)}`).classList.add('active');
+        // Auto-load email settings when the tab is activated
+        if (tab.dataset.adminTab === 'email') loadEmailSettings();
+    });
+});
+
+// ========================================
+// Email Settings Functions
+// ========================================
+
+async function loadEmailSettings() {
+    try {
+        const settings = await api('/api/admin/email-settings');
+        if (!settings) return;
+        const el = (id) => $(id);
+        el('#inputSmtpName').value = settings.smtp_server_name || '';
+        el('#inputSmtpHost').value = settings.smtp_host || '';
+        el('#inputSmtpPort').value = settings.smtp_port || '';
+        el('#inputSmtpUsername').value = settings.smtp_username || '';
+        el('#inputSmtpPassword').value = settings.smtp_password || '';
+        el('#inputSmtpTls').checked = settings.smtp_ignore_tls === 'true';
+        el('#inputSmtpSender').value = settings.smtp_sender || '';
+    } catch (err) {
+        console.error('Failed to load email settings:', err);
+    }
+}
+
+$('#formEmailSettings').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = $('#btnSaveEmail');
+    const origText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-sm"></span> Saving...';
+
+    try {
+        const payload = {
+            smtp_server_name: $('#inputSmtpName').value.trim(),
+            smtp_host: $('#inputSmtpHost').value.trim(),
+            smtp_port: $('#inputSmtpPort').value.trim(),
+            smtp_username: $('#inputSmtpUsername').value.trim(),
+            smtp_password: $('#inputSmtpPassword').value,
+            smtp_ignore_tls: String($('#inputSmtpTls').checked),
+            smtp_sender: $('#inputSmtpSender').value.trim()
+        };
+
+        const res = await api('/api/admin/email-settings', { method: 'PUT', body: JSON.stringify(payload) });
+        if (res && res.success) {
+            showToast('Email settings saved successfully!', 'success');
+            loadEmailSettings(); // Reload to get masked password
+        }
+    } catch (err) {
+        showToast('Failed to save email settings: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+    }
+});
+
+$('#btnTestEmail').addEventListener('click', async () => {
+    const btn = $('#btnTestEmail');
+    const origText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-sm"></span> Sending...';
+
+    try {
+        const res = await api('/api/admin/email-settings/test', { method: 'POST', body: JSON.stringify({}) });
+        if (res && res.success) {
+            showToast(res.message || 'Test email sent!', 'success');
+        }
+    } catch (err) {
+        showToast('Test email failed: ' + (err.message || 'Check your SMTP settings'), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+    }
+});
+
+// Create User
+$('#btnNewUser').addEventListener('click', async () => {
+    $('#modalUserTitle').textContent = 'Create User';
+    $('#btnUserSubmit').textContent = 'Create User';
+    $('#editUserId').value = '';
+    $('#formUser').reset();
+    $('#userPasswordGroup').style.display = '';
+
+    // Populate teams
+    const teams = await api('/api/admin/teams') || [];
+    $('#inputUserTeam').innerHTML = '<option value="">No team</option>' +
+        teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+
+    openModal('modalUser');
+});
+
+async function editUser(id) {
+    const user = adminUsers.find(u => u.id === id);
+    if (!user) return;
+
+    $('#modalUserTitle').textContent = 'Edit User';
+    $('#btnUserSubmit').textContent = 'Save Changes';
+    $('#editUserId').value = id;
+    $('#inputUserName').value = user.display_name;
+    $('#inputUserEmail').value = user.email;
+    $('#inputUserRole').value = user.role;
+    $('#userPasswordGroup').style.display = 'none';
+
+    const teams = await api('/api/admin/teams') || [];
+    $('#inputUserTeam').innerHTML = '<option value="">No team</option>' +
+        teams.map(t => `<option value="${t.id}" ${t.id === user.team_id ? 'selected' : ''}>${t.name}</option>`).join('');
+
+    openModal('modalUser');
+}
+
+$('#formUser').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const editId = $('#editUserId').value;
+    const data = {
+        email: $('#inputUserEmail').value,
+        display_name: $('#inputUserName').value,
+        role: $('#inputUserRole').value,
+        team_id: $('#inputUserTeam').value ? parseInt($('#inputUserTeam').value) : null
+    };
+    if (!editId) {
+        const pwd = $('#inputUserPassword').value;
+        if (pwd) data.password = pwd;
+    }
+
+    try {
+        if (editId) {
+            await api(`/api/admin/users/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
+            showToast('User updated');
         } else {
-            badge.style.display = 'none';
-            navBadge.style.display = 'none';
+            await api('/api/admin/users', { method: 'POST', body: JSON.stringify(data) });
+            showToast('User created');
         }
-    } catch (err) { /* silent */ }
+        closeModal();
+        loadAdminUsers();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+function resetUserPassword(id, name) {
+    $('#resetUserId').value = id;
+    $('#resetUserName').textContent = name;
+    $('#formResetPassword').reset();
+    openModal('modalResetPassword');
 }
 
-// ─── Modals ───────────────────────────────────
-function initModals() {
-    const overlay = $('#modalOverlay');
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) closeModal();
-    });
+$('#formResetPassword').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = $('#resetUserId').value;
+    try {
+        await api(`/api/admin/users/${id}/reset-password`, {
+            method: 'PUT',
+            body: JSON.stringify({ password: $('#inputResetPassword').value })
+        });
+        closeModal();
+        showToast('Password reset');
+    } catch (err) { showToast(err.message, 'error'); }
+});
 
-    $$('[data-close]').forEach(btn => {
-        btn.addEventListener('click', closeModal);
-    });
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeModal();
-    });
+async function deactivateUser(id) {
+    if (!confirm('Deactivate this user?')) return;
+    try {
+        await api(`/api/admin/users/${id}`, { method: 'DELETE' });
+        showToast('User deactivated');
+        loadAdminUsers();
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-function openModal(modalId) {
-    $$('.modal').forEach(m => m.style.display = 'none');
-    $(`#${modalId}`).style.display = 'block';
-    $('#modalOverlay').classList.add('active');
+async function activateUser(id) {
+    try {
+        await api(`/api/admin/users/${id}`, { method: 'PUT', body: JSON.stringify({ is_active: true }) });
+        showToast('User activated');
+        loadAdminUsers();
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-function closeModal() {
-    // If locked, do not close
-    if ($('#modalOverlay').classList.contains('locked')) return;
+// ===== Teams =====
+async function loadAdminTeams() {
+    try {
+        adminTeams = await api('/api/admin/teams') || [];
+        const grid = $('#teamsGrid');
+        const empty = $('#teamsEmpty');
 
-    $('#modalOverlay').classList.remove('active');
-    $$('.modal').forEach(m => m.style.display = 'none');
-}
-
-// ─── Forms ────────────────────────────────────
-function initForms() {
-    // New File form
-    $('#formNewFile').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const data = {
-            pr_number: $('#inputPR').value.trim(),
-            title: $('#inputTitle').value.trim(),
-            process_name: $('#inputProcess').value,
-            officer_id: parseInt($('#inputOfficer').value)
-        };
-
-        // Optional backdate fields
-        const assignedDate = $('#inputAssignedDate').value;
-        if (assignedDate) data.assigned_date = assignedDate;
-
-        const currentStep = $('#inputCurrentStep').value;
-        if (currentStep) data.current_step_order = parseInt(currentStep);
-
-        try {
-            const res = await authFetch(`${API}/api/files`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error);
-            }
-            showToast('Procurement file created!', 'success');
-
-            // Send assignment email via mailto:
-            const officerSelect = $('#inputOfficer');
-            const selectedOption = officerSelect.options[officerSelect.selectedIndex];
-            const officerName = selectedOption.textContent;
-            const officerEmail = selectedOption.dataset.email || '';
-            const processName = $('#inputProcess').value;
-            sendFileAssignmentEmail(
-                officerName,
-                officerEmail,
-                data.title,
-                data.pr_number,
-                processName
-            );
-
-            closeModal();
-            e.target.reset();
-            loadFiles();
-        } catch (err) {
-            showToast(err.message || 'Failed to create file', 'error');
+        if (adminTeams.length === 0) {
+            grid.innerHTML = '';
+            empty.style.display = 'flex';
+            return;
         }
-    });
+        empty.style.display = 'none';
 
-    // New Officer form
-    $('#formNewOfficer').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const data = {
-            name: $('#inputOfficerName').value.trim(),
-            email: $('#inputOfficerEmail').value.trim()
-        };
+        grid.innerHTML = adminTeams.map(t => `
+            <div class="officer-card team-card">
+                <div class="officer-card-header">
+                    <div class="officer-avatar team-avatar">🏢</div>
+                    <div class="officer-info">
+                        <h3>${t.name}</h3>
+                        <span class="officer-email">Created ${new Date(t.created_at).toLocaleDateString()}</span>
+                    </div>
+                </div>
+                <div class="officer-stats">
+                    <div class="officer-stat">
+                        <span class="officer-stat-value">${t.member_count || 0}</span>
+                        <span class="officer-stat-label">Members</span>
+                    </div>
+                    <div class="officer-stat">
+                        <span class="officer-stat-value">${t.leader_count || 0}</span>
+                        <span class="officer-stat-label">Leaders</span>
+                    </div>
+                    <div class="officer-stat">
+                        <span class="officer-stat-value">${t.officer_count || 0}</span>
+                        <span class="officer-stat-label">Officers</span>
+                    </div>
+                </div>
+                <div class="officer-card-actions">
+                    <button class="btn btn-sm btn-secondary" onclick="editTeam(${t.id}, '${t.name.replace(/'/g, "\\'")}')">Edit</button>
+                    ${parseInt(t.member_count) === 0 ? `<button class="btn btn-sm btn-danger" onclick="deleteTeam(${t.id})">Delete</button>` : ''}
+                </div>
+            </div>
+        `).join('');
+    } catch (err) { console.error('Teams load error:', err); }
+}
 
-        try {
-            const res = await authFetch(`${API}/api/officers`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error);
-            }
-            showToast('Officer added!', 'success');
-            closeModal();
-            e.target.reset();
-            loadOfficers();
-        } catch (err) {
-            showToast(err.message || 'Failed to add officer', 'error');
+$('#btnNewTeam').addEventListener('click', () => {
+    $('#modalTeamTitle').textContent = 'Create Team';
+    $('#btnTeamSubmit').textContent = 'Create Team';
+    $('#editTeamId').value = '';
+    $('#formTeam').reset();
+    openModal('modalTeam');
+});
+
+function editTeam(id, name) {
+    $('#modalTeamTitle').textContent = 'Edit Team';
+    $('#btnTeamSubmit').textContent = 'Save Changes';
+    $('#editTeamId').value = id;
+    $('#inputTeamName').value = name;
+    openModal('modalTeam');
+}
+
+$('#formTeam').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const editId = $('#editTeamId').value;
+    const body = { name: $('#inputTeamName').value };
+    try {
+        if (editId) {
+            await api(`/api/admin/teams/${editId}`, { method: 'PUT', body: JSON.stringify(body) });
+            showToast('Team updated');
+        } else {
+            await api('/api/admin/teams', { method: 'POST', body: JSON.stringify(body) });
+            showToast('Team created');
         }
-    });
+        closeModal();
+        loadAdminTeams();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+async function deleteTeam(id) {
+    if (!confirm('Delete this team?')) return;
+    try {
+        await api(`/api/admin/teams/${id}`, { method: 'DELETE' });
+        showToast('Team deleted');
+        loadAdminTeams();
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-// ─── Actions ──────────────────────────────────
-function initActions() {
-    $('#btnNewFile').addEventListener('click', async () => {
-        // Populate dropdowns
-        const [procsRes, offRes] = await Promise.all([
-            authFetch(`${API}/api/processes`),
-            authFetch(`${API}/api/officers`)
-        ]);
-        const procs = await procsRes.json();
-        const officers = await offRes.json();
+// ===== Admin Processes =====
+let adminProcesses = [];
+let editProcessStepsData = [];
 
-        const procSel = $('#inputProcess');
-        procSel.innerHTML = '<option value="">Select process...</option>' +
-            procs.map(p => `<option value="${p.name}">${formatProcess(p.name)}</option>`).join('');
+async function loadAdminProcesses() {
+    try {
+        adminProcesses = await api('/api/admin/processes') || [];
+        const tbody = $('#processesBody');
+        tbody.innerHTML = adminProcesses.map(p => `
+            <tr>
+                <td><strong>${p.name}</strong></td>
+                <td>${p.step_count}</td>
+                <td>${p.total_sla_days} days</td>
+                <td>
+                    <button class="btn btn-sm btn-secondary" onclick="openProcessStepsModal('${p.name.replace(/'/g, "\\'")}')">Edit Steps</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteProcess('${p.name.replace(/'/g, "\\'")}')">Delete</button>
+                </td>
+            </tr>
+        `).join('') || `<tr><td colspan="4" class="text-center text-muted" style="padding: 1rem;">No processes found.</td></tr>`;
+    } catch (err) { console.error('Processes load error:', err); }
+}
 
-        const offSel = $('#inputOfficer');
-        offSel.innerHTML = '<option value="">Select officer...</option>' +
-            officers.map(o => `<option value="${o.id}" data-email="${escHtml(o.email)}">${escHtml(o.name)}</option>`).join('');
+$('#btnNewProcess').addEventListener('click', async () => {
+    const name = prompt('Enter new process name:');
+    if (!name || !name.trim()) return;
+    try {
+        await api('/api/admin/processes', { method: 'POST', body: JSON.stringify({ name }) });
+        showToast('Process created');
+        loadAdminProcesses();
+    } catch (err) { showToast(err.message, 'error'); }
+});
 
-        // Reset optional fields
-        $('#inputAssignedDate').value = '';
-        $('#inputCurrentStep').innerHTML = '<option value="">Step 1 (start from beginning)</option>';
+window.deleteProcess = async function (name) {
+    if (!confirm(`Are you sure you want to delete the process "${name}"? This will fail if files are using it.`)) return;
+    try {
+        await api(`/api/admin/processes/${name}`, { method: 'DELETE' });
+        showToast('Process deleted');
+        loadAdminProcesses();
+    } catch (err) { showToast(err.message, 'error'); }
+};
 
-        // When process changes, load steps for the step dropdown
-        procSel.onchange = async () => {
-            const stepSel = $('#inputCurrentStep');
-            const processName = procSel.value;
-            if (!processName) {
-                stepSel.innerHTML = '<option value="">Step 1 (start from beginning)</option>';
-                return;
-            }
-            try {
-                const stepsRes = await authFetch(`${API}/api/processes/${processName}/steps`);
-                const steps = await stepsRes.json();
-                stepSel.innerHTML = '<option value="">Step 1 — ' + escHtml(steps[0]?.step_name || 'Start') + ' (beginning)</option>' +
-                    steps.slice(1).map(s => `<option value="${s.step_order}">Step ${s.step_order} — ${escHtml(s.step_name)}</option>`).join('');
-            } catch (err) {
-                stepSel.innerHTML = '<option value="">Step 1 (start from beginning)</option>';
-            }
-        };
+// Modal Steps Logic
+window.openProcessStepsModal = async function (name) {
+    $('#modalProcessTitle').textContent = `Edit Steps: ${name}`;
+    $('#editProcessName').value = name;
+    try {
+        const steps = await api(`/api/admin/processes/${name}/steps`) || [];
+        editProcessStepsData = steps.map(s => ({
+            id: s.id,
+            step_name: s.step_name,
+            sla_days: s.sla_days,
+            step_order: s.step_order
+        }));
+        renderProcessStepsList();
+        openModal('modalProcessSteps');
+    } catch (err) { showToast(err.message, 'error'); }
+};
 
-        openModal('modalNewFile');
+function renderProcessStepsList() {
+    const container = $('#processStepsList');
+    container.innerHTML = editProcessStepsData.map((step, index) => `
+        <div class="step-edit-row" data-index="${index}">
+            <div class="step-edit-drag" title="Drag handles (up/down array visually)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="8" x2="20" y2="8"></line><line x1="4" y1="16" x2="20" y2="16"></line></svg>
+            </div>
+            <div class="step-edit-order">${index + 1}.</div>
+            <input type="text" class="text-input step-edit-input" value="${escapeHtml(step.step_name)}" placeholder="Step Name" onchange="updateStepData(${index}, 'step_name', this.value)">
+            <input type="number" class="text-input step-edit-sla" value="${step.sla_days}" min="0" title="SLA Days" onchange="updateStepData(${index}, 'sla_days', this.value)">
+            <span class="text-muted" style="font-size:0.8rem;">days</span>
+            
+            <div style="margin-left:auto; display:flex; gap:4px;">
+                <button class="btn-step-action" onclick="moveStep(${index}, -1)" ${index === 0 ? 'disabled style="opacity:0.3"' : ''} title="Move Up">▲</button>
+                <button class="btn-step-action" onclick="moveStep(${index}, 1)" ${index === editProcessStepsData.length - 1 ? 'disabled style="opacity:0.3"' : ''} title="Move Down">▼</button>
+                <button class="btn-step-action danger" onclick="removeStep(${index})" title="Remove Step">✖</button>
+            </div>
+        </div>
+    `).join('') || `<div class="text-center text-muted" style="padding: 20px;">No steps defined yet. Minimum 1 required.</div>`;
+}
+
+window.updateStepData = function (index, field, value) {
+    if (field === 'sla_days') value = parseInt(value) || 0;
+    editProcessStepsData[index][field] = value;
+};
+
+window.moveStep = function (index, dir) {
+    const newIdx = index + dir;
+    if (newIdx < 0 || newIdx >= editProcessStepsData.length) return;
+    const temp = editProcessStepsData[index];
+    editProcessStepsData[index] = editProcessStepsData[newIdx];
+    editProcessStepsData[newIdx] = temp;
+    renderProcessStepsList();
+};
+
+window.removeStep = function (index) {
+    editProcessStepsData.splice(index, 1);
+    renderProcessStepsList();
+};
+
+$('#btnAddProcessStep').addEventListener('click', () => {
+    editProcessStepsData.push({
+        id: null,
+        step_name: '',
+        sla_days: 0,
+        step_order: editProcessStepsData.length + 1
     });
+    renderProcessStepsList();
+});
 
-    $('#btnNewOfficer').addEventListener('click', () => {
-        openModal('modalNewOfficer');
-    });
+$('#btnSaveProcessSteps').addEventListener('click', async () => {
+    const processName = $('#editProcessName').value;
 
-    $('#btnReadAll').addEventListener('click', async () => {
-        try {
-            await authFetch(`${API}/api/notifications/read-all`, { method: 'PUT' });
-            showToast('All notifications marked as read', 'success');
-            loadNotifications();
-            pollNotifications();
-        } catch (err) {
-            showToast('Failed', 'error');
+    const invalid = editProcessStepsData.find(s => !s.step_name.trim());
+    if (invalid) return showToast('All steps must have a name', 'error');
+    if (editProcessStepsData.length === 0) return showToast('Must have at least one step', 'error');
+
+    try {
+        await api(`/api/admin/processes/${processName}/steps`, {
+            method: 'PUT',
+            body: JSON.stringify({ steps: editProcessStepsData })
+        });
+        showToast('Process steps updated!');
+        closeModal();
+        loadAdminProcesses();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+// ===== Triage =====
+function triageStatusBadge(status) {
+    const cls = {
+        'Triaged': 'badge-triaged',
+        'Missing Document(s)': 'badge-missing-docs',
+        'Assigned': 'badge-assigned',
+        'Awarded': 'badge-awarded',
+        'Cancelled': 'badge-cancelled'
+    }[status] || 'badge-active';
+    return `<span class="badge ${cls}">${status}</span>`;
+}
+
+function formatCurrency(val) {
+    if (!val && val !== 0) return '—';
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'CAD' }).format(val);
+}
+
+async function loadTriage() {
+    try {
+        // Load stats
+        const stats = await api('/api/triage/stats');
+        if (stats) {
+            $('#triageStatTriaged').textContent = stats.triaged || 0;
+            $('#triageStatMissing').textContent = stats.missing_docs || 0;
+            $('#triageStatAssigned').textContent = stats.assigned || 0;
+            $('#triageStatAwarded').textContent = stats.awarded || 0;
+            $('#triageStatCancelled').textContent = stats.cancelled || 0;
         }
-    });
-
-    $('#btnCheckSLA').addEventListener('click', async () => {
-        try {
-            showToast('Running SLA check...', 'info');
-            const res = await authFetch(`${API}/api/sla-check`, { method: 'POST' });
-            if (res.ok) {
-                showToast('SLA check completed', 'success');
-                pollNotifications();
-                if (currentPage === 'notifications') loadNotifications();
-                if (currentPage === 'dashboard') loadDashboard();
-            }
-        } catch (err) {
-            showToast('SLA check failed', 'error');
-        }
-    });
-
-    // Transfer modal buttons
-    $('#btnCloseTransfer').addEventListener('click', closeTransferModal);
-    $('#btnCancelTransfer').addEventListener('click', closeTransferModal);
-    $('#btnConfirmTransfer').addEventListener('click', confirmTransfer);
-    $('#transferOverlay').addEventListener('click', (e) => {
-        if (e.target === $('#transferOverlay')) closeTransferModal();
-    });
-}
-
-// ─── Helpers ──────────────────────────────────
-function escHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
-
-function formatProcess(name) {
-    if (!name) return '';
-    return name.replace(/_/g, ' ');
-}
-
-function formatDate(dateStr) {
-    if (!dateStr) return '—';
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function formatDateLong(dateStr) {
-    if (!dateStr) return '—';
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function statusChip(file) {
-    if (file.status === 'Completed') {
-        return '<span class="status-chip status-completed"><span class="status-dot"></span>Completed</span>';
+        await refreshTriageTable();
+    } catch (err) {
+        console.error('Triage load error:', err);
     }
-    if (file.is_overdue) {
-        return '<span class="status-chip status-overdue"><span class="status-dot"></span>Overdue</span>';
-    }
-    return '<span class="status-chip status-active"><span class="status-dot"></span>Active</span>';
 }
 
-function initials(name) {
-    if (!name) return '?';
-    return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
-}
+async function refreshTriageTable() {
+    const params = new URLSearchParams();
+    const status = $('#filterTriageStatus').value;
+    if (status) params.set('status', status);
 
-// ─── Email (mailto:) ──────────────────────────
-function sendEmail({ to, subject, body }) {
-    const mailtoUrl = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(mailtoUrl, '_blank');
-}
+    const items = await api(`/api/triage?${params}`);
+    if (!items) return;
 
-function sendFileAssignmentEmail(officerName, officerEmail, fileName, fileId, processType) {
-    if (!officerEmail) {
-        showToast('Officer email not available — email skipped', 'info');
+    const tbody = $('#triageBody');
+    const empty = $('#triageEmpty');
+    if (items.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = 'flex';
         return;
     }
+    empty.style.display = 'none';
 
-    const subject = `New Procurement File Assigned: ${fileName}`;
-    const body = `Dear ${officerName},
+    tbody.innerHTML = items.map(t => {
+        const dateStr = new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const canAssign = t.status === 'Triaged';
+        const canManage = t.status === 'Triaged' || t.status === 'Missing Document(s)';
 
-You have been assigned a new procurement file. Please find the details below:
-
-─────────────────────────────
-File Name: ${fileName}
-PR Number: ${fileId}
-Process Type: ${processType.replace(/_/g, ' ')}
-─────────────────────────────
-
-Please log in to the FileTracker system to review and begin processing this file.
-
-Thank you,
-Procurement File Tracking System`;
-
-    sendEmail({ to: officerEmail, subject, body });
+        return `<tr>
+            <td><span class="pr-number">${escHtml(t.pr_number)}</span></td>
+            <td><div class="file-title-cell">${escHtml(t.title)}</div></td>
+            <td>${escHtml(t.business_owner)}</td>
+            <td>${formatCurrency(t.estimated_value)}</td>
+            <td>${escHtml(t.team_name || '—')}</td>
+            <td>${triageStatusBadge(t.status)}</td>
+            <td>
+                <div class="date-cell">
+                    <div class="date-main">${dateStr}</div>
+                    <div class="date-sub">${timeAgo(t.created_at)}</div>
+                </div>
+            </td>
+            <td>
+                <div class="btn-action-group">
+                    <button class="btn-action btn-view" onclick="viewTriageDetail(${t.id})">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        View
+                    </button>
+                    ${canAssign ? `<button class="btn-action btn-advance" onclick="openAssignTriage(${t.id})">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" y1="8" x2="19" y2="14"></line><line x1="22" y1="11" x2="16" y2="11"></line></svg>
+                        Assign
+                    </button>` : ''}
+                    ${canManage ? `<button class="btn-action btn-view" onclick="openMissingDocs(${t.id})" style="color: var(--warning)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+                        Docs
+                    </button>` : ''}
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
 }
 
-function showToast(message, type = 'info') {
-    const container = $('#toastContainer');
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateX(20px)';
-        toast.style.transition = '0.3s ease';
-        setTimeout(() => toast.remove(), 300);
-    }, 3500);
-}
+$('#filterTriageStatus').addEventListener('change', refreshTriageTable);
 
-// ─── Authentication ───────────────────────────
-function initAuth() {
-    // Login form
-    $('#formLogin').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const username = $('#loginUsername').value.trim();
-        const password = $('#loginPassword').value;
-        const errorEl = $('#loginError');
-        const btn = $('#loginBtn');
-
-        errorEl.style.display = 'none';
-        btn.textContent = 'Signing in...';
-        btn.disabled = true;
-
-        try {
-            const res = await fetch(`${API}/api/auth/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Login failed');
-            }
-
-            // Store token and user data
-            authToken = data.token;
-            currentUser = data.user;
-            localStorage.setItem('authToken', authToken);
-
-            // Update UI
-            updateUserUI(currentUser);
-            showApp();
-            loadPage('dashboard');
-            pollNotifications();
-            setInterval(pollNotifications, 60000);
-            showToast(`Welcome, ${currentUser.displayName}!`, 'success');
-
-            // Check if password change is required
-            if (currentUser.passwordChanged === false) {
-                forcePasswordChange();
-            }
-        } catch (err) {
-            errorEl.textContent = err.message;
-            errorEl.style.display = 'block';
-        } finally {
-            btn.textContent = 'Sign In';
-            btn.disabled = false;
-        }
-    });
-
-    // Change Password form
-    $('#formChangePassword').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const currentPassword = $('#inputCurrentPassword').value;
-        const newPassword = $('#inputNewPassword').value;
-        const confirmPassword = $('#inputConfirmPassword').value;
-
-        if (newPassword !== confirmPassword) {
-            showToast('New passwords do not match', 'error');
-            return;
-        }
-
-        if (newPassword.length < 6) {
-            showToast('Password must be at least 6 characters', 'error');
-            return;
-        }
-
-        try {
-            const res = await authFetch(`${API}/api/auth/password`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ currentPassword, newPassword })
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Failed to change password');
-            }
-
-            showToast('Password updated successfully!', 'success');
-            closeModal();
-            showToast('Password updated successfully!', 'success');
-            closeModal();
-            e.target.reset();
-
-            // If we were in forced mode, reload to reset state/buttons
-            if ($('#modalChangePassword .btn-close').style.display === 'none') {
-                window.location.reload();
-            }
-        } catch (err) {
-            showToast(err.message || 'Failed to change password', 'error');
-        }
-    });
-
-    // Check if already logged in
-    if (authToken) {
-        verifyToken();
-    } else {
-        hideApp();
-    }
-}
-
-async function verifyToken() {
+// New triage
+$('#btnNewTriage').addEventListener('click', () => openModal('modalNewTriage'));
+$('#formNewTriage').addEventListener('submit', async (e) => {
+    e.preventDefault();
     try {
-        const res = await fetch(`${API}/api/auth/me`, {
-            headers: { 'Authorization': `Bearer ${authToken}` }
+        await api('/api/triage', {
+            method: 'POST',
+            body: JSON.stringify({
+                pr_number: $('#inputTriagePR').value,
+                title: $('#inputTriageTitle').value,
+                estimated_value: $('#inputTriageValue').value || undefined,
+                business_owner: $('#inputTriageOwner').value
+            })
         });
+        closeModal();
+        e.target.reset();
+        showToast('Triage file created');
+        loadTriage();
+    } catch (err) { showToast(err.message, 'error'); }
+});
 
-        if (!res.ok) throw new Error('Invalid token');
+// Triage detail
+async function viewTriageDetail(id) {
+    try {
+        const t = await api(`/api/triage/${id}`);
+        if (!t) return;
 
-        currentUser = await res.json();
-        updateUserUI(currentUser);
-        showApp();
-        loadPage('dashboard');
-        pollNotifications();
-        pollNotifications();
-        setInterval(pollNotifications, 60000);
+        $('#triageDetailTitle').innerHTML = `<span class="pr-accent">${escHtml(t.pr_number)}</span> &mdash; ${escHtml(t.title)}`;
 
-        // Check if password change is required
-        if (currentUser.passwordChanged === false) {
-            forcePasswordChange();
+        const dateStr = new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+        let html = `
+        <div class="modal-meta-grid">
+            <div class="meta-box">
+                <span class="meta-label">PR NUMBER</span>
+                <span class="meta-value">${escHtml(t.pr_number)}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">TITLE</span>
+                <span class="meta-value">${escHtml(t.title)}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">BUSINESS OWNER</span>
+                <span class="meta-value">${escHtml(t.business_owner)}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">TEAM</span>
+                <span class="meta-value">${escHtml(t.team_name || '—')}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">ESTIMATED VALUE</span>
+                <span class="meta-value">${formatCurrency(t.estimated_value)}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">STATUS</span>
+                <span class="meta-value">${triageStatusBadge(t.status)}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">CREATED</span>
+                <span class="meta-value">${dateStr}</span>
+            </div>
+            <div class="meta-box">
+                <span class="meta-label">TRIAGED BY</span>
+                <span class="meta-value">${escHtml(t.created_by_name || '—')}</span>
+            </div>
+        </div>`;
+
+        // Missing documents section
+        if (t.missing_docs && t.missing_docs.length > 0) {
+            const deadlineStr = t.doc_deadline
+                ? new Date(t.doc_deadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                : '—';
+            const isOverdue = t.doc_deadline && new Date() > new Date(t.doc_deadline);
+
+            html += `
+            <h3 class="timeline-title" style="margin-top:24px;">Missing Documents</h3>
+            <div class="missing-docs-deadline">
+                <span>Deadline: <strong style="color:${isOverdue ? 'var(--danger)' : 'var(--text)'}">${deadlineStr}</strong></span>
+                ${isOverdue ? '<span class="badge badge-cancelled">OVERDUE</span>' : ''}
+            </div>
+            <div class="missing-docs-list">`;
+
+            for (const doc of t.missing_docs) {
+                html += `
+                <div class="missing-doc-item ${doc.provided ? 'doc-provided' : 'doc-pending'}">
+                    <label class="doc-check-label">
+                        <input type="checkbox" ${doc.provided ? 'checked' : ''} onchange="toggleDocProvided(${t.id}, ${doc.id}, this.checked)">
+                        <span class="doc-name">${escHtml(doc.document_name)}</span>
+                    </label>
+                    <button class="btn-icon" onclick="removeDoc(${t.id}, ${doc.id})" title="Remove">✖</button>
+                </div>`;
+            }
+            html += `</div>`;
         }
+
+        // Action buttons
+        if (t.status === 'Triaged') {
+            const subject = encodeURIComponent(`PR #${t.pr_number} Triaged - ${t.title}`);
+            const bodyStr = `Hello ${t.business_owner},\n\nThis is to inform you that your PR #${t.pr_number} for ${t.title} has been received, triaged by Procurement services, and will be assigned to the next available Contracting Officer.\n\nThank you for your patience.`;
+            const body = encodeURIComponent(bodyStr);
+
+            html += `
+            <div class="modal-advance-area" style="margin-top:24px;">
+                <a href="mailto:?subject=${subject}&body=${body}" class="btn btn-secondary btn-full" style="text-align:center; display:block; text-decoration:none; margin-bottom:10px;">Email Business Owner (Triaged)</a>
+                <button class="btn btn-primary btn-full" onclick="closeModal(); openAssignTriage(${t.id});">Assign to Officer</button>
+            </div>
+            <div class="modal-advance-area" style="margin-top:10px;">
+                <button class="btn btn-secondary btn-full" onclick="closeModal(); openMissingDocs(${t.id});">Mark Missing Document(s)</button>
+            </div>`;
+        }
+        if (t.status === 'Missing Document(s)') {
+            const pendingDocs = t.missing_docs.filter(d => !d.provided).map(d => d.document_name);
+            if (pendingDocs.length > 0) {
+                const deadlineStr = t.doc_deadline
+                    ? new Date(t.doc_deadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : 'N/A';
+
+                const subject = encodeURIComponent(`Missing Documents for PR #${t.pr_number} - ${t.title}`);
+                const bodyStr = `Hello ${t.business_owner},\n\nThe Procurement Services has received your PR# ${t.pr_number} for ${t.title} in our queue.  Before we are able to triage and assign your file to an available contracting officer, missing forms need to be added to your PR in SAP.\n\nPlease find the link to the Procurement Services landing page, which can help you in identifying requirements for your procurement initiatives:  Contracting process forms <https://intranet.ent.dfo-mpo.ca/cfo-dpf/en/node/2430> .\n\nThe following form(s) are missing from your request and must be attached to the PR in SAP:\n\n${pendingDocs.map(d => '- ' + d).join('\n')}\n\nPlease note that missing document(s) will not be accepted by e-mail and must be attached the PR in SAP.\n\nPlease attach the missing form(s) to the PR no later than ${deadlineStr} . Please advise as soon as the document(s) have been uploaded to SAP so that we may continue to triage your file. (Please note that SAP does not notify procurement when new documents have been uploaded to an existing PR so if you don't advise us, we will be unaware and your file will not be processed.)\n\nShould DFO Procurement Services not receive the missing document(s) within the given timeframe, your PR will have to be cancelled and will be removed from the queue. In exceptional circumstances, additional time may be provided when requested prior to the above deadline.\n\nPlease reach out if you need clarification.\n\nRegards,`;
+                const body = encodeURIComponent(bodyStr);
+
+                html += `
+                <div class="modal-advance-area" style="margin-top:24px;">
+                    <a href="mailto:?subject=${subject}&body=${body}" class="btn btn-primary btn-full" style="text-align:center; display:block; text-decoration:none;">Email Business Owner (Missing Docs)</a>
+                </div>`;
+            }
+        }
+
+        if (t.status === 'Triaged' || t.status === 'Missing Document(s)') {
+            html += `
+            <div class="modal-advance-area" style="margin-top:10px;">
+                <button class="btn btn-danger btn-full" onclick="cancelTriageFile(${t.id})">Cancel File</button>
+            </div>`;
+        }
+        if (t.status === 'Assigned') {
+            const officerName = t.assigned_officer_name || '[Officer]';
+            const subject = encodeURIComponent(`PR #${t.pr_number} Assigned - ${t.title}`);
+            const bodyStr = `Hello ${t.business_owner},\n\nThis is to inform you that your PR #${t.pr_number} for ${t.title} has been assigned to ${officerName} and will be contacting within 48 hours to introduce themselves.\n\nThank you,`;
+            const body = encodeURIComponent(bodyStr);
+
+            html += `
+            <div class="modal-advance-area" style="margin-top:24px;">
+                <a href="mailto:?subject=${subject}&body=${body}" class="btn btn-secondary btn-full" style="text-align:center; display:block; text-decoration:none; margin-bottom:10px;">Email Business Owner (Assigned)</a>
+                <button class="btn btn-primary btn-full" onclick="awardTriageFile(${t.id})">Mark as Awarded</button>
+            </div>
+            <div class="modal-advance-area" style="margin-top:10px;">
+                <button class="btn btn-danger btn-full" onclick="cancelTriageFile(${t.id})">Cancel File</button>
+            </div>`;
+        }
+
+        // Status history timeline
+        if (t.status_history && t.status_history.length > 0) {
+            html += `<h3 class="timeline-title" style="margin-top:24px;">Status History</h3>
+            <div class="triage-timeline">`;
+            for (const h of t.status_history) {
+                const when = new Date(h.created_at);
+                const dateStr = when.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const timeStr = when.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                html += `
+                <div class="triage-timeline-item">
+                    <div class="triage-timeline-dot"></div>
+                    <div class="triage-timeline-content">
+                        <div class="triage-timeline-header">
+                            ${h.from_status ? `${triageStatusBadge(h.from_status)} <span class="triage-timeline-arrow">\u2192</span>` : ''}
+                            ${triageStatusBadge(h.to_status)}
+                        </div>
+                        <div class="triage-timeline-meta">
+                            <span>${dateStr} at ${timeStr}</span>
+                            ${h.changed_by_name ? `<span>\u00b7 by ${escHtml(h.changed_by_name)}</span>` : ''}
+                        </div>
+                        ${h.note ? `<div class="triage-timeline-note">${escHtml(h.note)}</div>` : ''}
+                    </div>
+                </div>`;
+            }
+            html += `</div>`;
+        }
+
+        $('#triageDetailBody').innerHTML = html;
+        openModal('modalTriageDetail');
     } catch (err) {
-        // Token invalid — show login
-        authToken = null;
-        localStorage.removeItem('authToken');
-        hideApp();
+        showToast(err.message, 'error');
     }
 }
 
-function logout() {
-    authToken = null;
-    currentUser = null;
-    localStorage.removeItem('authToken');
-    hideApp();
-    $('#loginUsername').value = '';
-    $('#loginPassword').value = '';
-    $('#loginError').style.display = 'none';
+async function toggleDocProvided(triageId, docId, provided) {
+    try {
+        const result = await api(`/api/triage/${triageId}/missing-docs/${docId}`, {
+            method: 'PUT', body: JSON.stringify({ provided })
+        });
+        if (result && result.all_provided) {
+            showToast('All documents provided — status changed to Triaged');
+        }
+        viewTriageDetail(triageId);
+        loadTriage();
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-function showApp() {
-    $('#loginScreen').classList.add('hidden');
-    $('#sidebar').classList.remove('app-hidden');
-    document.querySelector('.main-content').classList.remove('app-hidden');
+async function removeDoc(triageId, docId) {
+    try {
+        await api(`/api/triage/${triageId}/missing-docs/${docId}`, { method: 'DELETE' });
+        showToast('Document removed');
+        viewTriageDetail(triageId);
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-function hideApp() {
-    $('#loginScreen').classList.remove('hidden');
-    $('#sidebar').classList.add('app-hidden');
-    document.querySelector('.main-content').classList.add('app-hidden');
+async function cancelTriageFile(id) {
+    if (!confirm('Are you sure you want to cancel this triage file?')) return;
+    try {
+        await api(`/api/triage/${id}/status`, {
+            method: 'PUT', body: JSON.stringify({ status: 'Cancelled' })
+        });
+        showToast('Triage file cancelled');
+        closeModal();
+        loadTriage();
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-function updateUserUI(user) {
-    if (!user) return;
-    const init = initials(user.displayName);
-    const name = user.displayName;
-
-    // Header avatar & dropdown
-    $('#headerAvatar').textContent = init;
-    $('#dropdownName').textContent = name;
-
-    // Sidebar user
-    $('#sidebarAvatar').textContent = init;
-    $('#sidebarUserName').textContent = name;
+async function awardTriageFile(id) {
+    if (!confirm('Mark this file as Awarded?')) return;
+    try {
+        await api(`/api/triage/${id}/status`, {
+            method: 'PUT', body: JSON.stringify({ status: 'Awarded' })
+        });
+        showToast('File marked as Awarded');
+        closeModal();
+        loadTriage();
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
-function initUserMenu() {
+// Missing docs modal
+function openMissingDocs(triageId) {
+    $('#missingDocsTriageId').value = triageId;
+    $('#missingDocsInputList').innerHTML = `
+        <div class="missing-doc-input-row">
+            <input type="text" class="text-input missing-doc-name" placeholder="Document name" required>
+            <button type="button" class="btn-icon" onclick="this.parentElement.remove()" title="Remove">✖</button>
+        </div>`;
+    openModal('modalMissingDocs');
+}
+
+$('#btnAddDocInput').addEventListener('click', () => {
+    const row = document.createElement('div');
+    row.className = 'missing-doc-input-row';
+    row.innerHTML = `
+        <input type="text" class="text-input missing-doc-name" placeholder="Document name" required>
+        <button type="button" class="btn-icon" onclick="this.parentElement.remove()" title="Remove">✖</button>`;
+    $('#missingDocsInputList').appendChild(row);
+});
+
+$('#btnSubmitMissingDocs').addEventListener('click', async () => {
+    const triageId = $('#missingDocsTriageId').value;
+    const inputs = $$('#missingDocsInputList .missing-doc-name');
+    const documents = [...inputs].map(i => i.value.trim()).filter(v => v);
+    if (documents.length === 0) { showToast('Enter at least one document name', 'error'); return; }
+
+    try {
+        await api(`/api/triage/${triageId}/missing-docs`, {
+            method: 'POST', body: JSON.stringify({ documents })
+        });
+        closeModal();
+        showToast('Missing documents added — deadline set to 7 days');
+        loadTriage();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+// Assign triage
+async function openAssignTriage(triageId) {
+    try {
+        const t = await api(`/api/triage/${triageId}`);
+        if (!t) return;
+        if (t.status !== 'Triaged') { showToast('Only Triaged files can be assigned', 'error'); return; }
+
+        $('#assignTriageId').value = triageId;
+        $('#assignTriageInfo').innerHTML = `
+            <div class="triage-assign-summary">
+                <strong>${escHtml(t.pr_number)}</strong> — ${escHtml(t.title)}<br>
+                <span style="color:var(--text-secondary)">Business Owner: ${escHtml(t.business_owner)} · Est. Value: ${formatCurrency(t.estimated_value)}</span>
+            </div>`;
+
+        // Populate process select
+        const procs = await api('/api/processes');
+        $('#assignTriageProcess').innerHTML = procs.map(p =>
+            `<option value="${p.name}">${p.name.replace(/_/g, ' ')}</option>`
+        ).join('');
+
+        // Populate officer select
+        const officers = await api('/api/officers');
+        $('#assignTriageOfficer').innerHTML = officers.map(o =>
+            `<option value="${o.id}">${o.name}${o.team_name ? ' (' + o.team_name + ')' : ''}</option>`
+        ).join('');
+
+        openModal('modalAssignTriage');
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
+$('#formAssignTriage').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const triageId = $('#assignTriageId').value;
+    try {
+        await api(`/api/triage/${triageId}/assign`, {
+            method: 'POST',
+            body: JSON.stringify({
+                officer_id: parseInt($('#assignTriageOfficer').value),
+                process_name: $('#assignTriageProcess').value,
+                assigned_date: $('#assignTriageDate').value || undefined
+            })
+        });
+        closeModal();
+        e.target.reset();
+        showToast('File assigned to officer!');
+        loadTriage();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+// ===== SLA Check =====
+$('#btnCheckSLA').addEventListener('click', async () => {
+    try {
+        await api('/api/sla-check', { method: 'POST' });
+        showToast('SLA check completed');
+        updateNotifBadge();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+// ===== Header & Sidebar =====
+$('#btnHamburger').addEventListener('click', () => {
+    $('#sidebar').classList.toggle('open');
+});
+
+// Close sidebar on nav click (mobile)
+$$('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+        if (window.innerWidth <= 768) $('#sidebar').classList.remove('open');
+    });
+});
+
+// Header notification bell
+$('#btnHeaderNotif').addEventListener('click', () => navigateTo('notifications'));
+
+// User dropdown
+function setupUserMenu() {
     const trigger = $('#btnUserMenu');
     const dropdown = $('#userDropdown');
 
@@ -1324,19 +1937,15 @@ function initUserMenu() {
         e.stopPropagation();
         dropdown.classList.toggle('active');
     });
+    document.addEventListener('click', () => dropdown.classList.remove('active'));
 
-    // Close dropdown on outside click
-    document.addEventListener('click', () => {
-        dropdown.classList.remove('active');
-    });
-
-    // Change Password button
+    // Change password
     $('#btnChangePassword').addEventListener('click', () => {
         dropdown.classList.remove('active');
         openModal('modalChangePassword');
     });
 
-    // Logout button
+    // Logout
     $('#btnLogout').addEventListener('click', () => {
         dropdown.classList.remove('active');
         logout();
@@ -1344,32 +1953,107 @@ function initUserMenu() {
     });
 }
 
+// ===== Change Password =====
+$('#formChangePassword').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const newPwd = $('#inputNewPassword').value;
+    const confirm = $('#inputConfirmPassword').value;
+    if (newPwd !== confirm) { showToast('Passwords do not match', 'error'); return; }
+
+    try {
+        await api('/api/auth/password', {
+            method: 'PUT',
+            body: JSON.stringify({
+                currentPassword: $('#inputCurrentPassword').value,
+                newPassword: newPwd
+            })
+        });
+
+        // Remove forced password change lock
+        $('#modalOverlay').classList.remove('locked');
+        const modal = $('#modalChangePassword');
+        const hClose = modal.querySelector('.btn-close');
+        if (hClose) hClose.style.display = '';
+        const cancel = modal.querySelector('.modal-footer .btn-secondary');
+        if (cancel) cancel.style.display = '';
+        const msg = modal.querySelector('.force-msg');
+        if (msg) msg.remove();
+
+        closeModal();
+        e.target.reset();
+        currentUser.passwordChanged = true;
+        showToast('Password updated');
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+// ===== Force Password Change =====
 function forcePasswordChange() {
-    openModal('modalChangePassword');
+    console.log('forcePasswordChange called');
+    const modalId = 'modalChangePassword';
+    const modal = $('#' + modalId);
+    console.log('Modal element:', modal);
 
-    const modal = $('#modalChangePassword');
-
-    // Hide Close button in header
-    const headerClose = modal.querySelector('.btn-close');
-    if (headerClose) headerClose.style.display = 'none';
-
-    // Hide Cancel button in footer
-    const cancelBtn = modal.querySelector('.modal-footer .btn-secondary');
-    if (cancelBtn) cancelBtn.style.display = 'none';
-
-    // Add explanation message if not present
-    let msg = modal.querySelector('.force-msg');
-    if (!msg) {
-        msg = document.createElement('div');
-        msg.className = 'force-msg';
-        msg.textContent = 'For security, you must change your password before continuing.';
-        msg.style.cssText = 'background:rgba(245, 158, 11, 0.15); color:var(--text-primary); border:1px solid rgba(245, 158, 11, 0.4); border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:0.9rem;';
-
-        // Prepend to form
-        const form = $('#formChangePassword');
-        if (form) form.insertBefore(msg, form.firstChild);
+    if (!modal) {
+        console.error('CRITICAL: modalChangePassword not found in DOM');
+        alert('Error: Password change modal missing');
+        return;
     }
 
-    // Lock the overlay
-    $('#modalOverlay').classList.add('locked');
+    try {
+        console.log('Opening modal via openModal...');
+        openModal(modalId);
+        console.log('Modal opened (style.display set to block)');
+
+        const headerClose = modal.querySelector('.btn-close');
+        if (headerClose) headerClose.style.display = 'none';
+
+        const cancelBtn = modal.querySelector('.modal-footer .btn-secondary');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+
+        let msg = modal.querySelector('.force-msg');
+        if (!msg) {
+            console.log('Creating force-msg');
+            msg = document.createElement('div');
+            msg.className = 'force-msg';
+            msg.style.cssText = 'background: var(--warning-bg, #fff3cd); color: var(--warning-text, #856404); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9rem;';
+            msg.innerHTML = '⚠️ <strong>Password change required.</strong> Please set a new password to continue.';
+            const form = modal.querySelector('.modal-body');
+            if (form) form.insertBefore(msg, form.firstChild);
+        }
+
+        console.log('Adding locked class to overlay');
+        $('#modalOverlay').classList.add('locked');
+        console.log('forcePasswordChange complete');
+    } catch (e) {
+        console.error('forcePasswordChange crashed:', e);
+        alert('Error in forcePasswordChange: ' + e.message);
+    }
 }
+
+// ===== Admin styles badge CSS classes =====
+// Injected dynamically
+const adminStyle = document.createElement('style');
+adminStyle.textContent = `
+            .admin - tabs { display: flex; gap: 0; border - bottom: 2px solid var(--border); margin - bottom: 24px; }
+    .admin - tab { padding: 12px 24px; background: none; border: none; font - size: 0.95rem; font - weight: 500; color: var(--text - secondary); cursor: pointer; border - bottom: 2px solid transparent; margin - bottom: -2px; transition: all 0.2s; }
+    .admin - tab.active { color: var(--primary); border - bottom - color: var(--primary); }
+    .admin - tab:hover { color: var(--text); }
+    .admin - tab - content { display: none; }
+    .admin - tab - content.active { display: block; }
+    .badge - role - admin { background: linear - gradient(135deg, #667eea, #764ba2); color: #fff; }
+    .badge - role - team_leader { background: linear - gradient(135deg, #11998e, #38ef7d); color: #fff; }
+    .badge - role - officer { background: linear - gradient(135deg, #4facfe, #00f2fe); color: #fff; }
+    .badge - inactive { background: var(--bg - secondary); color: var(--text - secondary); }
+    .team - avatar { font - size: 1.4rem; display: flex; align - items: center; justify - content: center; }
+    .officer - team { display: block; font - size: 0.8rem; color: var(--text - secondary); margin - top: 2px; }
+    .btn - danger { background: linear - gradient(135deg, #e53e3e, #c53030); color: #fff; border: none; }
+    .btn - danger:hover { opacity: 0.9; }
+    .btn - sm { padding: 6px 12px; font - size: 0.8rem; }
+    .btn - icon { background: none; border: none; cursor: pointer; padding: 4px; font - size: 1rem; }
+    .btn - icon:hover { opacity: 0.7; }
+        `;
+document.head.appendChild(adminStyle);
+
+// ===== Boot =====
+setupUserMenu();
+init();

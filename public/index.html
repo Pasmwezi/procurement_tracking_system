@@ -32,9 +32,9 @@
             </div>
             <form id="formLogin" class="login-form">
                 <div class="form-group">
-                    <label for="loginUsername">Username</label>
-                    <input type="text" id="loginUsername" class="text-input" required placeholder="Enter username"
-                        autocomplete="username">
+                    <label for="loginEmail">Email</label>
+                    <input type="email" id="loginEmail" class="text-input" required placeholder="Enter your email"
+                        autocomplete="email">
                 </div>
                 <div class="form-group">
                     <label for="loginPassword">Password</label>
@@ -44,7 +44,7 @@
                 <div class="login-error" id="loginError" style="display:none;"></div>
                 <button type="submit" class="btn btn-primary login-btn" id="loginBtn">Sign In</button>
             </form>
-            <p class="login-hint">Default: admin / admin123</p>
+            <p class="login-hint">Default admin: admin@filetracker.local / admin123</p>
         </div>
     </div>
 
@@ -65,7 +65,7 @@
         </div>
 
         <ul class="nav-menu">
-            <li class="nav-item active" data-page="dashboard">
+            <li class="nav-item active" data-page="dashboard" data-roles="team_leader officer">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="3" y="3" width="7" height="7"></rect>
                     <rect x="14" y="3" width="7" height="7"></rect>
@@ -74,14 +74,22 @@
                 </svg>
                 <span>Dashboard</span>
             </li>
-            <li class="nav-item" data-page="files">
+            <li class="nav-item" data-page="triage" data-roles="team_leader">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                    <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                    <path d="M9 14l2 2 4-4"></path>
+                </svg>
+                <span>Triage</span>
+            </li>
+            <li class="nav-item" data-page="files" data-roles="team_leader officer">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
                     <polyline points="13 2 13 9 20 9"></polyline>
                 </svg>
                 <span>Files</span>
             </li>
-            <li class="nav-item" data-page="officers">
+            <li class="nav-item" data-page="officers" data-roles="team_leader">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
                     <circle cx="9" cy="7" r="4"></circle>
@@ -90,7 +98,7 @@
                 </svg>
                 <span>Officers</span>
             </li>
-            <li class="nav-item" data-page="notifications">
+            <li class="nav-item" data-page="notifications" data-roles="team_leader officer">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
                     <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
@@ -98,10 +106,19 @@
                 <span>Notifications</span>
                 <span class="nav-badge" id="navNotifBadge" style="display:none;">0</span>
             </li>
+            <li class="nav-item" data-page="admin" data-roles="admin">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                    </path>
+                </svg>
+                <span>Administration</span>
+            </li>
         </ul>
 
         <div class="sidebar-footer">
-            <button class="btn-check-sla" id="btnCheckSLA" title="Manually trigger SLA check">
+            <button class="btn-check-sla" id="btnCheckSLA" title="Manually trigger SLA check" data-roles="team_leader">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"></circle>
                     <polyline points="12 6 12 12 16 14"></polyline>
@@ -111,8 +128,8 @@
             <div class="sidebar-user" id="sidebarUser">
                 <div class="sidebar-user-avatar" id="sidebarAvatar">TL</div>
                 <div class="sidebar-user-info">
-                    <span class="sidebar-user-name" id="sidebarUserName">Team Leader</span>
-                    <span class="sidebar-user-role">Administrator</span>
+                    <span class="sidebar-user-name" id="sidebarUserName">User</span>
+                    <span class="sidebar-user-role" id="sidebarUserRole">Role</span>
                 </div>
             </div>
         </div>
@@ -133,7 +150,7 @@
                 <h1 class="page-title" id="pageTitle">Dashboard</h1>
             </div>
             <div class="header-right">
-                <button class="btn-notification" id="btnHeaderNotif">
+                <button class="btn-notification" id="btnHeaderNotif" data-roles="team_leader officer">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
                         <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
@@ -142,7 +159,7 @@
                 </button>
                 <div class="user-menu" id="userMenu">
                     <button class="user-menu-trigger" id="btnUserMenu">
-                        <div class="user-avatar-sm" id="headerAvatar">TL</div>
+                        <div class="user-avatar-sm" id="headerAvatar">U</div>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2">
                             <polyline points="6 9 12 15 18 9"></polyline>
@@ -150,8 +167,8 @@
                     </button>
                     <div class="user-dropdown" id="userDropdown">
                         <div class="user-dropdown-header">
-                            <span class="user-dropdown-name" id="dropdownName">Team Leader</span>
-                            <span class="user-dropdown-role">Administrator</span>
+                            <span class="user-dropdown-name" id="dropdownName">User</span>
+                            <span class="user-dropdown-role" id="dropdownRole">Role</span>
                         </div>
                         <div class="user-dropdown-sep"></div>
                         <button class="user-dropdown-item" id="btnChangePassword">
@@ -178,6 +195,13 @@
 
         <!-- Dashboard Page -->
         <section class="page active" id="pageDashboard">
+            <div class="page-actions" data-roles="team_leader" style="justify-content: flex-end; margin-bottom: 24px;">
+                <div class="team-toggle">
+                    <button class="btn-toggle active" id="btnDashTeamMe">My Team</button>
+                    <button class="btn-toggle" id="btnDashTeamAll">All Teams</button>
+                </div>
+            </div>
+
             <div class="stats-grid" id="statsGrid">
                 <div class="stat-card stat-total">
                     <div class="stat-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"
@@ -185,7 +209,7 @@
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                             <polyline points="14 2 14 8 20 8"></polyline>
                         </svg></div>
-                    <div class="stat-info">
+                    <div class="stat-value-wrap">
                         <span class="stat-value" id="statTotal">0</span>
                         <span class="stat-label">Total Files</span>
                     </div>
@@ -195,7 +219,7 @@
                             stroke="currentColor" stroke-width="2">
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                         </svg></div>
-                    <div class="stat-info">
+                    <div class="stat-value-wrap">
                         <span class="stat-value" id="statActive">0</span>
                         <span class="stat-label">Active Files</span>
                     </div>
@@ -207,7 +231,7 @@
                             <line x1="12" y1="8" x2="12" y2="12"></line>
                             <line x1="12" y1="16" x2="12.01" y2="16"></line>
                         </svg></div>
-                    <div class="stat-info">
+                    <div class="stat-value-wrap">
                         <span class="stat-value" id="statOverdue">0</span>
                         <span class="stat-label">Overdue</span>
                     </div>
@@ -218,15 +242,28 @@
                             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
                             <polyline points="22 4 12 14.01 9 11.01"></polyline>
                         </svg></div>
-                    <div class="stat-info">
+                    <div class="stat-value-wrap">
                         <span class="stat-value" id="statCompleted">0</span>
                         <span class="stat-label">Completed</span>
+                    </div>
+                </div>
+                <div class="stat-card stat-triage" data-roles="team_leader">
+                    <div class="stat-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2">
+                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                            <path d="M9 14l2 2 4-4"></path>
+                        </svg></div>
+                    <div class="stat-value-wrap">
+                        <span class="stat-value" id="statPendingTriage">0</span>
+                        <span class="stat-label">Pending Triage</span>
+                        <span class="stat-sub" id="statTriageMissing"></span>
                     </div>
                 </div>
             </div>
 
             <div class="dashboard-grid">
-                <div class="card">
+                <div class="card" id="officerWorkloadCard">
                     <div class="card-header">
                         <h2>Officer Workload</h2>
                         <span class="card-header-sub">Active files per contracting officer</span>
@@ -265,6 +302,7 @@
             <div class="page-actions">
                 <div class="filter-bar">
                     <select id="filterOfficer" class="select-input">
+                        <option value="team_me" data-roles="team_leader">My Team</option>
                         <option value="">All Officers</option>
                     </select>
                     <select id="filterProcess" class="select-input">
@@ -276,7 +314,7 @@
                         <option value="Completed">Completed</option>
                     </select>
                 </div>
-                <button class="btn btn-primary" id="btnNewFile">
+                <button class="btn btn-primary" id="btnNewFile" data-roles="team_leader">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
                         <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -294,6 +332,7 @@
                             <th>Officer</th>
                             <th>Date Assigned</th>
                             <th>Current Step</th>
+                            <th>Current Step Due</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
@@ -311,11 +350,87 @@
             </div>
         </section>
 
+        <!-- Triage Page -->
+        <section class="page" id="pageTriage">
+            <div class="page-actions">
+                <div class="filter-bar">
+                    <select id="filterTriageStatus" class="select-input">
+                        <option value="">All Statuses</option>
+                        <option value="Triaged">Triaged</option>
+                        <option value="Missing Document(s)">Missing Document(s)</option>
+                        <option value="Assigned">Assigned</option>
+                        <option value="Awarded">Awarded</option>
+                        <option value="Cancelled">Cancelled</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" id="btnNewTriage">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    New Triage
+                </button>
+            </div>
+
+            <!-- Triage Stats Cards -->
+            <div class="triage-stats-row">
+                <div class="triage-stat-card triage-stat-triaged">
+                    <span class="triage-stat-value" id="triageStatTriaged">0</span>
+                    <span class="triage-stat-label">Triaged</span>
+                </div>
+                <div class="triage-stat-card triage-stat-missing">
+                    <span class="triage-stat-value" id="triageStatMissing">0</span>
+                    <span class="triage-stat-label">Missing Docs</span>
+                </div>
+                <div class="triage-stat-card triage-stat-assigned">
+                    <span class="triage-stat-value" id="triageStatAssigned">0</span>
+                    <span class="triage-stat-label">Assigned</span>
+                </div>
+                <div class="triage-stat-card triage-stat-awarded">
+                    <span class="triage-stat-value" id="triageStatAwarded">0</span>
+                    <span class="triage-stat-label">Awarded</span>
+                </div>
+                <div class="triage-stat-card triage-stat-cancelled">
+                    <span class="triage-stat-value" id="triageStatCancelled">0</span>
+                    <span class="triage-stat-label">Cancelled</span>
+                </div>
+            </div>
+
+            <div class="files-table-wrap">
+                <table class="data-table" id="triageTable">
+                    <thead>
+                        <tr>
+                            <th>PR Number</th>
+                            <th>Title</th>
+                            <th>Business Owner</th>
+                            <th>Estimated Value</th>
+                            <th>Team</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="triageBody"></tbody>
+                </table>
+                <div class="empty-state" id="triageEmpty" style="display:none;">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="1.5">
+                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                        <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                    </svg>
+                    <p>No triage files. Create your first triage entry to begin intake.</p>
+                </div>
+            </div>
+        </section>
+
         <!-- Officers Page -->
         <section class="page" id="pageOfficers">
             <div class="page-actions">
-                <div></div>
-                <button class="btn btn-primary" id="btnNewOfficer">
+                <div class="team-toggle" data-roles="team_leader">
+                    <button class="btn-toggle active" id="btnOfficerTeamMe">My Team</button>
+                    <button class="btn-toggle" id="btnOfficerTeamAll">All Teams</button>
+                </div>
+                <button class="btn btn-primary" id="btnNewOfficer" data-roles="team_leader">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
                         <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -335,15 +450,21 @@
 
         <!-- Notifications Page -->
         <section class="page" id="pageNotifications">
-            <div class="page-actions">
-                <div></div>
-                <button class="btn btn-secondary" id="btnReadAll">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="9 11 12 14 22 4"></polyline>
-                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-                    </svg>
-                    Mark All Read
-                </button>
+            <div class="notif-page-header">
+                <div class="notif-page-info">
+                    <h2 class="notif-page-title">Alert Center</h2>
+                    <p class="notif-page-subtitle" id="notifSummaryText">Checking for updates...</p>
+                </div>
+                <div class="page-actions" style="margin: 0;">
+                    <button class="btn btn-secondary" id="btnReadAll">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <polyline points="9 11 12 14 22 4"></polyline>
+                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                        </svg>
+                        Mark All Read
+                    </button>
+                </div>
             </div>
             <div class="notifications-list" id="notificationsList"></div>
             <div class="empty-state" id="notifsEmpty" style="display:none;">
@@ -352,6 +473,286 @@
                     <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
                 </svg>
                 <p>No notifications. All files are on track!</p>
+            </div>
+        </section>
+
+        <!-- Administration Page (Admin only) -->
+        <section class="page" id="pageAdmin">
+            <div class="admin-layout">
+                <div class="admin-sidebar">
+                    <h3 class="admin-sidebar-title">Settings</h3>
+                    <div class="admin-tabs">
+                        <button class="admin-tab active" data-admin-tab="users">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                            </svg>
+                            Users
+                        </button>
+                        <button class="admin-tab" data-admin-tab="teams">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                            </svg>
+                            Teams
+                        </button>
+                        <button class="admin-tab" data-admin-tab="processes">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path
+                                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                                </path>
+                            </svg>
+                            Processes
+                        </button>
+                        <button class="admin-tab" data-admin-tab="email">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z">
+                                </path>
+                                <polyline points="22,6 12,13 2,6"></polyline>
+                            </svg>
+                            Email Settings
+                        </button>
+                    </div>
+                </div>
+
+                <div class="admin-content-area">
+
+                    <!-- Users Tab -->
+                    <div class="admin-tab-content active" id="adminTabUsers">
+                        <div class="admin-section-header">
+                            <div class="admin-section-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                    <circle cx="9" cy="7" r="4"></circle>
+                                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3>User Management</h3>
+                                <p class="admin-section-desc">Manage system users, reset passwords, and assign roles.
+                                </p>
+                            </div>
+                        </div>
+                        <div class="page-actions">
+                            <div class="filter-bar">
+                                <select id="adminFilterRole" class="select-input">
+                                    <option value="">All Roles</option>
+                                    <option value="team_leader">Team Leaders</option>
+                                    <option value="officer">Officers</option>
+                                    <option value="admin">Admins</option>
+                                </select>
+                                <select id="adminFilterTeam" class="select-input">
+                                    <option value="">All Teams</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-primary" id="btnNewUser">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                New User
+                            </button>
+                        </div>
+                        <div class="files-table-wrap">
+                            <table class="data-table" id="usersTable">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Email</th>
+                                        <th>Role</th>
+                                        <th>Team</th>
+                                        <th>Files</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="usersBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Teams Tab -->
+                    <div class="admin-tab-content" id="adminTabTeams">
+                        <div class="admin-section-header">
+                            <div class="admin-section-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3>Team Management</h3>
+                                <p class="admin-section-desc">Create and organize procurement teams.</p>
+                            </div>
+                        </div>
+                        <div class="page-actions">
+                            <div></div>
+                            <button class="btn btn-primary" id="btnNewTeam">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                New Team
+                            </button>
+                        </div>
+                        <div class="officers-grid" id="teamsGrid"></div>
+                        <div class="empty-state" id="teamsEmpty" style="display:none;">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="1.5">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                            </svg>
+                            <p>No teams yet. Create your first team.</p>
+                        </div>
+                    </div>
+
+                    <!-- Processes Tab -->
+                    <div class="admin-tab-content" id="adminTabProcesses">
+                        <div class="admin-section-header">
+                            <div class="admin-section-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                    <path
+                                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                                    </path>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3>Procurement Processes</h3>
+                                <p class="admin-section-desc">Configure workflows and predefined steps for procurement
+                                    files.</p>
+                            </div>
+                        </div>
+                        <div class="page-actions">
+                            <div></div>
+                            <button class="btn btn-primary" id="btnNewProcess">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                New Process
+                            </button>
+                        </div>
+                        <div class="files-table-wrap">
+                            <table class="data-table" id="processesTable">
+                                <thead>
+                                    <tr>
+                                        <th>Process Name</th>
+                                        <th>Total Steps</th>
+                                        <th>Total SLA (Days)</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="processesBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Email Settings Tab -->
+                    <div class="admin-tab-content" id="adminTabEmail">
+                        <div class="email-settings-container card">
+                            <div class="admin-section-header">
+                                <div class="admin-section-icon">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2">
+                                        <path
+                                            d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z">
+                                        </path>
+                                        <polyline points="22,6 12,13 2,6"></polyline>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3>SMTP Email Server</h3>
+                                    <p class="admin-section-desc">Configure the outgoing email server used for SLA
+                                        alerts and
+                                        file assignment notifications.</p>
+                                </div>
+                            </div>
+
+                            <form id="formEmailSettings" class="email-settings-form">
+                                <div class="form-group">
+                                    <label for="inputSmtpName">Name of the email server <span class="form-hint">(e.g.
+                                            your
+                                            domain name)</span></label>
+                                    <input type="text" id="inputSmtpName" class="text-input"
+                                        placeholder="e.g. FileTracker Mail">
+                                </div>
+                                <div class="form-group">
+                                    <label for="inputSmtpHost">Host of the email server <span class="form-hint">(e.g.
+                                            smtp.gmail.com)</span></label>
+                                    <input type="text" id="inputSmtpHost" class="text-input"
+                                        placeholder="e.g. smtp.gmail.com" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="inputSmtpPort">Port of the email server <span
+                                            class="form-hint">(commonly 25,
+                                            465 or 587)</span></label>
+                                    <input type="number" id="inputSmtpPort" class="text-input" placeholder="587"
+                                        required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="inputSmtpUsername">Username used to authenticate the email
+                                        server</label>
+                                    <input type="text" id="inputSmtpUsername" class="text-input"
+                                        placeholder="e.g. user@domain.com">
+                                </div>
+                                <div class="form-group">
+                                    <label for="inputSmtpPassword">Password used to authenticate the email
+                                        server</label>
+                                    <input type="password" id="inputSmtpPassword" class="text-input"
+                                        placeholder="Enter SMTP password">
+                                </div>
+                                <div class="form-group form-group-toggle">
+                                    <label for="inputSmtpTls">
+                                        Whether to ignore email server's TLS certificate verification.
+                                        <span class="form-hint">Enable it for self-signed certificates.</span>
+                                    </label>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="inputSmtpTls">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="form-group">
+                                    <label for="inputSmtpSender">Sender of all the emails <span class="form-hint">(e.g.
+                                            "FileTracker Notifications")</span></label>
+                                    <input type="text" id="inputSmtpSender" class="text-input"
+                                        placeholder="e.g. FileTracker Notifications">
+                                </div>
+
+                                <div class="email-settings-actions">
+                                    <button type="submit" class="btn btn-primary" id="btnSaveEmail">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="2">
+                                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z">
+                                            </path>
+                                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                            <polyline points="7 3 7 8 15 8"></polyline>
+                                        </svg>
+                                        Save Settings
+                                    </button>
+                                    <button type="button" class="btn btn-secondary" id="btnTestEmail">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="2">
+                                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                                        </svg>
+                                        Send Test Email
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
     </main>
@@ -461,6 +862,218 @@
                 </div>
             </form>
         </div>
+
+        <!-- New/Edit User Modal (Admin) -->
+        <div class="modal" id="modalUser" style="display:none;">
+            <div class="modal-header">
+                <h2 id="modalUserTitle">Create User</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formUser" class="modal-body">
+                <input type="hidden" id="editUserId">
+                <div class="form-group">
+                    <label for="inputUserName">Full Name</label>
+                    <input type="text" id="inputUserName" class="text-input" required placeholder="e.g. Jane Smith">
+                </div>
+                <div class="form-group">
+                    <label for="inputUserEmail">Email</label>
+                    <input type="email" id="inputUserEmail" class="text-input" required
+                        placeholder="e.g. jane@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="inputUserRole">Role</label>
+                    <select id="inputUserRole" class="select-input" required>
+                        <option value="">Select role...</option>
+                        <option value="team_leader">Team Leader</option>
+                        <option value="officer">Officer</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="inputUserTeam">Team <span class="form-hint">(optional)</span></label>
+                    <select id="inputUserTeam" class="select-input">
+                        <option value="">No team</option>
+                    </select>
+                </div>
+                <div class="form-group" id="userPasswordGroup">
+                    <label for="inputUserPassword">Temporary Password</label>
+                    <input type="password" id="inputUserPassword" class="text-input" placeholder="Min 6 characters"
+                        minlength="6">
+                    <span class="form-hint">User will be prompted to change on first login</span>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="btnUserSubmit">Create User</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- New Team Modal (Admin) -->
+        <div class="modal" id="modalTeam" style="display:none;">
+            <div class="modal-header">
+                <h2 id="modalTeamTitle">Create Team</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formTeam" class="modal-body">
+                <input type="hidden" id="editTeamId">
+                <div class="form-group">
+                    <label for="inputTeamName">Team Name</label>
+                    <input type="text" id="inputTeamName" class="text-input" required
+                        placeholder="e.g. Procurement Team A">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="btnTeamSubmit">Create Team</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Reset Password Modal (Admin) -->
+        <div class="modal" id="modalResetPassword" style="display:none;">
+            <div class="modal-header">
+                <h2>Reset User Password</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formResetPassword" class="modal-body">
+                <input type="hidden" id="resetUserId">
+                <p style="margin-bottom:16px; color:var(--text-secondary);">Set a new temporary password for <strong
+                        id="resetUserName"></strong></p>
+                <div class="form-group">
+                    <label for="inputResetPassword">New Password</label>
+                    <input type="password" id="inputResetPassword" class="text-input" required
+                        placeholder="Min 6 characters" minlength="6">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary">Reset Password</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Edit Process Steps Modal (Admin) -->
+        <div class="modal" id="modalProcessSteps" style="display:none; max-width: 700px;">
+            <div class="modal-header">
+                <h2 id="modalProcessTitle">Edit Process Steps</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editProcessName">
+                <div class="process-steps-container" id="processStepsList">
+                    <!-- Step rows will be rendered here -->
+                </div>
+
+                <button class="btn btn-secondary" id="btnAddProcessStep" style="margin-top: 16px; width: 100%;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    Add Step
+                </button>
+
+                <div class="modal-footer" style="margin-top: 24px;">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="button" class="btn btn-primary" id="btnSaveProcessSteps">Save Changes</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- New Triage Modal -->
+        <div class="modal" id="modalNewTriage" style="display:none;">
+            <div class="modal-header">
+                <h2>New Triage File</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formNewTriage" class="modal-body">
+                <div class="form-group">
+                    <label for="inputTriagePR">PR Number</label>
+                    <input type="text" id="inputTriagePR" class="text-input" required placeholder="e.g. PR-2026-001">
+                </div>
+                <div class="form-group">
+                    <label for="inputTriageTitle">Title</label>
+                    <input type="text" id="inputTriageTitle" class="text-input" required
+                        placeholder="e.g. Office Supplies Q1">
+                </div>
+                <div class="form-group">
+                    <label for="inputTriageValue">Estimated Value <span class="form-hint">(optional)</span></label>
+                    <input type="number" id="inputTriageValue" class="text-input" step="0.01" min="0"
+                        placeholder="e.g. 50000.00">
+                </div>
+                <div class="form-group">
+                    <label for="inputTriageOwner">Business Owner (Client)</label>
+                    <input type="text" id="inputTriageOwner" class="text-input" required
+                        placeholder="e.g. Department of Finance">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Triage File</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Triage Detail Modal -->
+        <div class="modal modal-wide" id="modalTriageDetail" style="display:none;">
+            <div class="modal-header">
+                <h2 id="triageDetailTitle">Triage Detail</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <div class="modal-body" id="triageDetailBody"></div>
+        </div>
+
+        <!-- Assign Triage File Modal -->
+        <div class="modal" id="modalAssignTriage" style="display:none;">
+            <div class="modal-header">
+                <h2>Assign to Officer</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formAssignTriage" class="modal-body">
+                <input type="hidden" id="assignTriageId">
+                <div class="triage-assign-info" id="assignTriageInfo"></div>
+                <div class="form-group">
+                    <label for="assignTriageProcess">Procurement Process</label>
+                    <select id="assignTriageProcess" class="select-input" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="assignTriageOfficer">Assign to Officer</label>
+                    <select id="assignTriageOfficer" class="select-input" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="assignTriageDate">Assignment Date <span class="form-hint">(leave blank for
+                            today)</span></label>
+                    <input type="date" id="assignTriageDate" class="text-input">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary">Assign File</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Missing Documents Modal -->
+        <div class="modal" id="modalMissingDocs" style="display:none;">
+            <div class="modal-header">
+                <h2>Add Missing Documents</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="missingDocsTriageId">
+                <p style="margin-bottom:16px; color:var(--text-secondary);">Enter the names of required documents the
+                    Business Owner must provide. They will have <strong>7 days</strong> to provide them.</p>
+                <div id="missingDocsInputList">
+                    <div class="missing-doc-input-row">
+                        <input type="text" class="text-input missing-doc-name" placeholder="Document name" required>
+                        <button type="button" class="btn-icon" onclick="this.parentElement.remove()"
+                            title="Remove">✖</button>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-secondary" id="btnAddDocInput" style="margin-top:8px; width:100%;">
+                    + Add Another Document
+                </button>
+                <div class="modal-footer" style="margin-top:16px;">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="button" class="btn btn-primary" id="btnSubmitMissingDocs">Submit Missing
+                        Documents</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Transfer Files Modal (separate overlay) -->
@@ -484,7 +1097,7 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <script src="/js/app.js"></script>
+    <script src="/js/app.js?v=3.0"></script>
 </body>
 
 </html>

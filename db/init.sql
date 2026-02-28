@@ -1,13 +1,26 @@
 -- =============================================
--- Procurement File Tracking System — Schema
+-- Procurement File Tracking System v2.0 — Schema
 -- =============================================
 
--- Officers table
-CREATE TABLE officers (
+-- Teams table
+CREATE TABLE teams (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(200) NOT NULL,
-    email VARCHAR(200) NOT NULL UNIQUE,
+    name VARCHAR(200) NOT NULL UNIQUE,
     created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Unified users table (admin, team_leader, officer)
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(200) NOT NULL UNIQUE,
+    password_hash VARCHAR(255),
+    display_name VARCHAR(200) NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'team_leader', 'officer')),
+    team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+    password_changed BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Processes table
@@ -32,7 +45,7 @@ CREATE TABLE files (
     pr_number VARCHAR(100) NOT NULL UNIQUE,
     title VARCHAR(500) NOT NULL,
     process_name VARCHAR(100) NOT NULL REFERENCES processes(name),
-    officer_id INTEGER NOT NULL REFERENCES officers(id),
+    officer_id INTEGER NOT NULL REFERENCES users(id),
     current_step_id INTEGER REFERENCES process_steps(id),
     status VARCHAR(50) DEFAULT 'Active',
     step_started_at TIMESTAMP DEFAULT NOW(),
@@ -55,32 +68,23 @@ CREATE TABLE file_step_log (
 CREATE TABLE notifications (
     id SERIAL PRIMARY KEY,
     file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-    officer_id INTEGER NOT NULL REFERENCES officers(id),
+    officer_id INTEGER NOT NULL REFERENCES users(id),
     step_id INTEGER NOT NULL REFERENCES process_steps(id),
     message TEXT NOT NULL,
     is_read BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Index for faster notification queries
+-- Indexes
 CREATE INDEX idx_notifications_officer ON notifications(officer_id, is_read);
 CREATE INDEX idx_files_officer ON files(officer_id);
 CREATE INDEX idx_files_status ON files(status);
+CREATE INDEX idx_users_role ON users(role);
+CREATE INDEX idx_users_team ON users(team_id);
 
--- Admin table
-CREATE TABLE admin (
-    id SERIAL PRIMARY KEY,
-    username VARCHAR(100) NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
-    display_name VARCHAR(200) NOT NULL DEFAULT 'Team Leader',
-    password_changed BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- Default admin: username=admin, password is set by the server at startup
-INSERT INTO admin (username, password_hash, display_name)
-VALUES ('admin', 'NEEDS_REHASH', 'Team Leader');
+-- Default App Admin: email=admin@filetracker.local, password set by server at startup
+INSERT INTO users (email, password_hash, display_name, role)
+VALUES ('admin@filetracker.local', 'NEEDS_REHASH', 'App Administrator', 'admin');
 
 -- =============================================
 -- Seed data: Processes
@@ -168,3 +172,10 @@ INSERT INTO process_steps (process_name, step_name, sla_days, cum_days, step_ord
     ('Service_Solic_Under_TA', 'Team Lead Review (Contract)', 2, 66, 9),
     ('Service_Solic_Under_TA', 'Contract Award', 3, 69, 10),
     ('Service_Solic_Under_TA', 'Completed', 0, 69, 11);
+
+-- App Settings (key-value store for SMTP config, etc.)
+CREATE TABLE IF NOT EXISTS app_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
