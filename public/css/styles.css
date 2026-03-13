@@ -3317,3 +3317,112 @@ body {
     border-radius: 4px;
     border-left: 3px solid var(--accent);
 }
+
+/* ==============================================
+   Transfer Modal Enhancements
+   ============================================== */
+
+.transfer-select-all-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    margin-top: 12px;
+    margin-bottom: 10px;
+}
+
+.transfer-select-all-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.transfer-select-all-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.transfer-count-hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.transfer-file-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+    background: var(--bg-tertiary);
+    transition: border-color var(--transition), background var(--transition);
+}
+
+.transfer-file-item:hover {
+    border-color: var(--border-accent);
+}
+
+.transfer-file-item:has(.transfer-file-chk:not(:checked)) {
+    opacity: 0.5;
+}
+
+.transfer-file-check-label {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    cursor: pointer;
+    user-select: none;
+    min-width: 0;
+}
+
+.transfer-file-check-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.transfer-file-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.transfer-file-info strong {
+    font-size: 0.88rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transfer-process-tag {
+    font-size: 0.72rem;
+    color: var(--accent-light);
+    font-weight: 500;
+    text-transform: capitalize;
+}
+
+.transfer-file-item .select-input {
+    flex-shrink: 0;
+    width: 200px;
+}
+
+#btnConfirmTransfer:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

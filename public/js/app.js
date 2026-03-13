@@ -939,37 +939,93 @@ async function openTransfer(officerId, officerName) {
         const officers = await api('/api/officers');
         const otherOfficers = officers.filter(o => o.id !== officerId);
 
-        $('#transferInfo').innerHTML = `<p>Transfer active files from <strong>${officerName}</strong> to another officer.</p>`;
+        if (otherOfficers.length === 0) {
+            showToast('No other officers available to transfer to', 'info');
+            return;
+        }
+
+        const total = files.length;
+
+        // Header info
+        $('#transferInfo').innerHTML = `
+            <p>Select the files you want to transfer from <strong>${escHtml(officerName)}</strong> and choose the target officer for each.</p>
+            <div class="transfer-select-all-bar">
+                <label class="transfer-select-all-label">
+                    <input type="checkbox" id="chkSelectAll" checked> Select / Deselect All
+                </label>
+                <span class="transfer-count-hint" id="transferCountHint"><span id="transferSelectedCount">${total}</span> of ${total} files selected</span>
+            </div>`;
+
+        const officerOptions = otherOfficers.map(o => `<option value="${o.id}">${escHtml(o.name)}${o.team_name ? ' (' + escHtml(o.team_name) + ')' : ''}</option>`).join('');
+
         $('#transferFileList').innerHTML = files.map(f => `
             <div class="transfer-file-item" data-file-id="${f.id}">
-                <div class="transfer-file-info">
-                    <strong>${f.pr_number}</strong> — ${f.title}
-                </div>
+                <label class="transfer-file-check-label">
+                    <input type="checkbox" class="transfer-file-chk" checked>
+                    <div class="transfer-file-info">
+                        <strong>${escHtml(f.pr_number)}</strong> — ${escHtml(f.title)}
+                        <span class="transfer-process-tag">${f.process_name.replace(/_/g, ' ')}</span>
+                    </div>
+                </label>
                 <select class="select-input transfer-target">
-                    ${otherOfficers.map(o => `<option value="${o.id}">${o.name}</option>`).join('')}
+                    ${officerOptions}
                 </select>
             </div>
         `).join('');
 
+        // Update button label to reflect selected count
+        function updateConfirmBtn() {
+            const checked = [...$$('.transfer-file-chk')].filter(c => c.checked).length;
+            $('#transferSelectedCount').textContent = checked;
+            const btn = $('#btnConfirmTransfer');
+            btn.disabled = checked === 0;
+            btn.textContent = checked === 0 ? 'Select at Least One File' : `Transfer ${checked} File${checked !== 1 ? 's' : ''}`;
+        }
+
+        // Select / Deselect All
+        document.getElementById('chkSelectAll').addEventListener('change', function () {
+            $$('.transfer-file-chk').forEach(c => c.checked = this.checked);
+            updateConfirmBtn();
+        });
+
+        // Individual checkbox change
+        $('#transferFileList').addEventListener('change', (e) => {
+            if (e.target.classList.contains('transfer-file-chk')) {
+                const allChecked = [...$$('.transfer-file-chk')].every(c => c.checked);
+                const noneChecked = [...$$('.transfer-file-chk')].every(c => !c.checked);
+                const selectAllChk = document.getElementById('chkSelectAll');
+                selectAllChk.indeterminate = !allChecked && !noneChecked;
+                selectAllChk.checked = allChecked;
+                updateConfirmBtn();
+            }
+        });
+
+        updateConfirmBtn();
         $('#transferOverlay').classList.add('active');
 
         // Confirm transfer
-        const confirmHandler = async () => {
-            const transfers = [...$$('.transfer-file-item')].map(item => ({
-                file_id: parseInt(item.dataset.fileId),
-                to_officer_id: parseInt(item.querySelector('.transfer-target').value)
-            }));
+        $('#btnConfirmTransfer').onclick = async () => {
+            const transfers = [...$$('.transfer-file-item')]
+                .filter(item => item.querySelector('.transfer-file-chk').checked)
+                .map(item => ({
+                    file_id: parseInt(item.dataset.fileId),
+                    to_officer_id: parseInt(item.querySelector('.transfer-target').value)
+                }));
+
+            if (transfers.length === 0) {
+                showToast('Please select at least one file to transfer', 'info');
+                return;
+            }
+
             try {
-                await api(`/api/officers/${officerId}/transfer`, {
+                const result = await api(`/api/officers/${officerId}/transfer`, {
                     method: 'PUT', body: JSON.stringify({ transfers })
                 });
                 $('#transferOverlay').classList.remove('active');
-                showToast('Files transferred');
+                showToast(`${result.transferred_count} file${result.transferred_count !== 1 ? 's' : ''} transferred successfully`);
                 loadOfficers();
-                $('#btnConfirmTransfer').removeEventListener('click', confirmHandler);
             } catch (err) { showToast(err.message, 'error'); }
         };
-        $('#btnConfirmTransfer').onclick = confirmHandler;
     } catch (err) { showToast(err.message, 'error'); }
 }
 
