@@ -27,6 +27,7 @@ services:
 
   app:
     build: .
+    image: pasmwezi/procurement_tracking_system:latest
     restart: unless-stopped
     ports:
       - "3000:3000"
