@@ -314,13 +314,23 @@
                         <option value="Completed">Completed</option>
                     </select>
                 </div>
-                <button class="btn btn-primary" id="btnNewFile" data-roles="team_leader">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    New File
-                </button>
+                <div style="display:flex;gap:10px;">
+                    <button class="btn btn-secondary" id="btnImportFiles" data-roles="team_leader">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        Import Excel
+                    </button>
+                    <button class="btn btn-primary" id="btnNewFile" data-roles="team_leader">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New File
+                    </button>
+                </div>
             </div>
             <div class="files-table-wrap">
                 <table class="data-table" id="filesTable">
@@ -363,13 +373,23 @@
                         <option value="Cancelled">Cancelled</option>
                     </select>
                 </div>
-                <button class="btn btn-primary" id="btnNewTriage">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    New Triage
-                </button>
+                <div style="display:flex;gap:10px;">
+                    <button class="btn btn-secondary" id="btnImportTriage">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        Import Excel
+                    </button>
+                    <button class="btn btn-primary" id="btnNewTriage">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New Triage
+                    </button>
+                </div>
             </div>
 
             <!-- Triage Stats Cards -->
@@ -1018,6 +1038,79 @@
             <div class="modal-body" id="triageDetailBody"></div>
         </div>
 
+        <!-- Import Files Excel Modal -->
+        <div class="modal modal-wide" id="modalImportFiles" style="display:none;">
+            <div class="modal-header">
+                <h2>Import Procurement Files from Excel</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Hint -->
+                <div class="import-files-hint">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                    Required columns: <code>PR Number</code>, <code>Title</code>, <code>Process</code>, <code>Officer</code>. Optional: <code>Assigned Date</code>, <code>Current Step</code>.
+                    <span id="filesImportAvailableInfo" style="display:block;margin-top:6px;"></span>
+                </div>
+
+                <!-- Drop zone -->
+                <div id="filesImportDropZone" class="import-drop-zone" style="margin-top:12px;">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <p class="import-drop-text">Drag &amp; drop your <strong>.xlsx</strong> file here</p>
+                    <p class="import-drop-sub">or</p>
+                    <label class="btn btn-secondary import-browse-btn" for="filesImportFileInput">Browse File</label>
+                    <input type="file" id="filesImportFileInput" accept=".xlsx,.xls" style="display:none;">
+                </div>
+
+                <!-- Template Download -->
+                <p class="import-template-hint">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    <a id="filesImportTemplateLink" href="#" class="import-template-link">Download Excel Template</a> — uses current officers and processes from your system.
+                </p>
+
+                <!-- Selected file name -->
+                <div id="filesImportFileChosen" class="import-file-chosen" style="display:none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                    <span id="filesImportFileName"></span>
+                    <button type="button" class="import-clear-btn" id="btnFilesImportClear" title="Remove file">&times;</button>
+                </div>
+
+                <!-- Preview Table -->
+                <div id="filesImportPreviewWrap" style="display:none;">
+                    <div class="import-preview-header">
+                        <span id="filesImportPreviewCount" class="import-preview-count"></span>
+                    </div>
+                    <div class="import-table-scroll">
+                        <table class="data-table import-preview-table" id="filesImportPreviewTable">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>PR Number</th>
+                                    <th>Title</th>
+                                    <th>Process</th>
+                                    <th>Officer</th>
+                                    <th>Assigned Date</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="filesImportPreviewBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Result Panel -->
+                <div id="filesImportResultPanel" class="import-result-panel" style="display:none;"></div>
+
+                <div class="modal-footer" style="margin-top:20px;">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="button" class="btn btn-primary" id="btnConfirmFilesImport" disabled>Import</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Assign Triage File Modal -->
         <div class="modal" id="modalAssignTriage" style="display:none;">
             <div class="modal-header">
@@ -1074,6 +1167,73 @@
                 </div>
             </div>
         </div>
+
+        <!-- Import Triage Excel Modal -->
+        <div class="modal modal-wide" id="modalImportTriage" style="display:none;">
+            <div class="modal-header">
+                <h2>Import Triage Files from Excel</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Upload Zone -->
+                <div id="importDropZone" class="import-drop-zone">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <p class="import-drop-text">Drag &amp; drop your <strong>.xlsx</strong> file here</p>
+                    <p class="import-drop-sub">or</p>
+                    <label class="btn btn-secondary import-browse-btn" for="importFileInput">Browse File</label>
+                    <input type="file" id="importFileInput" accept=".xlsx,.xls" style="display:none;">
+                </div>
+
+                <!-- Template Download -->
+                <p class="import-template-hint">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                    Need a template? <a id="importTemplateLink" href="#" class="import-template-link">Download Excel Template</a>.
+                    Required columns: <code>PR Number</code>, <code>Title</code>, <code>Business Owner</code>. Optional: <code>Estimated Value</code>.
+                </p>
+
+                <!-- Selected file name -->
+                <div id="importFileChosen" class="import-file-chosen" style="display:none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                    <span id="importFileName"></span>
+                    <button type="button" class="import-clear-btn" id="btnImportClear" title="Remove file">&times;</button>
+                </div>
+
+                <!-- Preview Table -->
+                <div id="importPreviewWrap" style="display:none;">
+                    <div class="import-preview-header">
+                        <span id="importPreviewCount" class="import-preview-count"></span>
+                    </div>
+                    <div class="import-table-scroll">
+                        <table class="data-table import-preview-table" id="importPreviewTable">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>PR Number</th>
+                                    <th>Title</th>
+                                    <th>Business Owner</th>
+                                    <th>Estimated Value</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="importPreviewBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Import Result Panel -->
+                <div id="importResultPanel" class="import-result-panel" style="display:none;"></div>
+
+                <div class="modal-footer" style="margin-top:20px;">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="button" class="btn btn-primary" id="btnConfirmImport" disabled>Import</button>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <!-- Transfer Files Modal (separate overlay) -->
@@ -1097,6 +1257,7 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
 
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="/js/app.js?v=3.0"></script>
 </body>
 

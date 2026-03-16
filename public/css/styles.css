@@ -3426,3 +3426,286 @@ body {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* ==============================================
+   Excel Import Modal
+   ============================================== */
+
+/* Drop zone */
+.import-drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 36px 24px;
+    border: 2px dashed var(--border-accent);
+    border-radius: var(--radius);
+    background: rgba(114, 57, 234, 0.04);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.import-drop-zone:hover,
+.import-drop-zone.import-drop-active {
+    border-color: var(--accent);
+    background: rgba(114, 57, 234, 0.08);
+    color: var(--text-secondary);
+    transform: translateY(-1px);
+}
+
+.import-drop-zone svg {
+    color: var(--accent-light);
+    opacity: 0.8;
+}
+
+.import-drop-text {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.import-drop-sub {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.import-browse-btn {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 20px;
+    font-size: 0.875rem;
+    border-radius: var(--radius-sm);
+    margin-top: 4px;
+}
+
+/* File chosen indicator */
+.import-file-chosen {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: rgba(56, 239, 125, 0.07);
+    border: 1px solid rgba(56, 239, 125, 0.25);
+    border-radius: var(--radius-sm);
+    font-size: 0.87rem;
+    color: var(--text-primary);
+    margin-top: 12px;
+}
+
+.import-file-chosen svg {
+    color: var(--success);
+    flex-shrink: 0;
+}
+
+#importFileName {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.import-clear-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    transition: color 0.15s;
+}
+
+.import-clear-btn:hover {
+    color: var(--danger);
+}
+
+/* Template hint */
+.import-template-hint {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 14px;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.import-template-hint svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--info);
+}
+
+.import-template-link {
+    color: var(--accent-light);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.import-template-link:hover {
+    color: var(--text-primary);
+}
+
+.import-template-hint code {
+    background: rgba(255,255,255,0.07);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* Preview table */
+.import-preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 20px;
+    margin-bottom: 10px;
+}
+
+.import-preview-count {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.import-table-scroll {
+    max-height: 280px;
+    overflow-y: auto;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+}
+
+.import-preview-table {
+    width: 100%;
+    font-size: 0.81rem;
+}
+
+.import-preview-table th {
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.import-row-invalid td {
+    background: rgba(229, 62, 62, 0.05) !important;
+}
+
+.import-row-ok {
+    color: var(--success);
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+
+.import-row-err {
+    color: var(--warning, #f7971e);
+    font-weight: 600;
+    font-size: 0.78rem;
+}
+
+.import-empty {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Result panel */
+.import-result-panel {
+    margin-top: 16px;
+}
+
+.import-result-summary {
+    border-radius: var(--radius-sm);
+    padding: 18px 20px;
+    border: 1px solid var(--border-color);
+}
+
+.import-result-success {
+    background: rgba(56, 239, 125, 0.07);
+    border-color: rgba(56, 239, 125, 0.25);
+}
+
+.import-result-warn {
+    background: rgba(247, 151, 30, 0.07);
+    border-color: rgba(247, 151, 30, 0.25);
+}
+
+.import-result-stats {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.import-result-stat {
+    font-size: 0.92rem;
+    color: var(--text-secondary);
+}
+
+.import-result-stat strong {
+    font-size: 1.2rem;
+    color: var(--text-primary);
+    margin-right: 4px;
+}
+
+.import-result-skipped {
+    margin-top: 8px;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.import-result-skipped ul {
+    margin: 6px 0 0 16px;
+    padding: 0;
+    list-style: disc;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.import-result-skipped li {
+    color: var(--warning, #f7971e);
+    line-height: 1.4;
+}
+
+/* Files import hint box */
+.import-files-hint {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 12px 16px;
+    background: rgba(79, 172, 254, 0.06);
+    border: 1px solid rgba(79, 172, 254, 0.2);
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.import-files-hint svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--info);
+}
+
+.import-files-hint code {
+    background: rgba(255,255,255,0.07);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+

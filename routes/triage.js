@@ -2,6 +2,21 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
 const { sendAssignmentEmail } = require('../services/emailService');
+const multer = require('multer');
+const XLSX = require('xlsx');
+
+// Multer: memory storage (no disk writes)
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+    fileFilter: (req, file, cb) => {
+        const ok = file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+                   file.mimetype === 'application/vnd.ms-excel' ||
+                   file.originalname.endsWith('.xlsx') ||
+                   file.originalname.endsWith('.xls');
+        cb(ok ? null : new Error('Only .xlsx / .xls files are allowed'), ok);
+    }
+});
 
 // Helper: log a status change
 async function logStatusChange(dbOrPool, triageFileId, fromStatus, toStatus, changedBy, note) {
@@ -404,6 +419,111 @@ router.post('/:id/assign', async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         if (err.code === '23505') return res.status(409).json({ error: 'PR Number already exists in files' });
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// POST /api/triage/import — bulk import triage files from Excel
+router.post('/import', upload.single('file'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded. Please upload an .xlsx file.' });
+    }
+
+    let workbook;
+    try {
+        workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    } catch (e) {
+        return res.status(400).json({ error: 'Could not parse Excel file. Ensure it is a valid .xlsx file.' });
+    }
+
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) {
+        return res.status(400).json({ error: 'Excel file has no worksheets.' });
+    }
+
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+    if (rows.length === 0) {
+        return res.status(400).json({ error: 'The sheet is empty. Please add data rows below the header.' });
+    }
+
+    // Normalise header keys to lowercase with underscores for flexible matching
+    const normalise = str => String(str || '').trim().toLowerCase().replace(/\s+/g, '_');
+
+    const imported = [];
+    const skipped = [];
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        for (let i = 0; i < rows.length; i++) {
+            const rawRow = rows[i];
+            const rowNum = i + 2; // +1 for header, +1 for 1-based human row number
+
+            // Build a normalised key map
+            const norm = {};
+            for (const [k, v] of Object.entries(rawRow)) {
+                norm[normalise(k)] = String(v || '').trim();
+            }
+
+            // Map flexible column name variants
+            const pr_number     = norm['pr_number'] || norm['pr_no'] || norm['pr'] || norm['purchase_requisition_number'] || norm['pr_#'] || '';
+            const title         = norm['title'] || norm['file_title'] || norm['description'] || '';
+            const business_owner = norm['business_owner'] || norm['owner'] || norm['business_unit'] || '';
+            const estimated_value_raw = norm['estimated_value'] || norm['value'] || norm['amount'] || '';
+            const estimated_value = estimated_value_raw !== '' && !isNaN(parseFloat(estimated_value_raw))
+                ? parseFloat(estimated_value_raw)
+                : null;
+
+            // Validate required fields
+            if (!pr_number) {
+                skipped.push({ row: rowNum, reason: 'Missing PR Number' });
+                continue;
+            }
+            if (!title) {
+                skipped.push({ row: rowNum, pr_number, reason: 'Missing Title' });
+                continue;
+            }
+            if (!business_owner) {
+                skipped.push({ row: rowNum, pr_number, reason: 'Missing Business Owner' });
+                continue;
+            }
+
+            try {
+                const result = await client.query(
+                    `INSERT INTO triage_files (pr_number, title, team_id, estimated_value, business_owner, created_by, status)
+                     VALUES ($1, $2, $3, $4, $5, $6, 'Triaged') RETURNING id`,
+                    [pr_number, title, req.user.teamId || null, estimated_value, business_owner, req.user.id]
+                );
+                const triageId = result.rows[0].id;
+                await client.query(
+                    `INSERT INTO triage_status_history (triage_file_id, from_status, to_status, changed_by, note)
+                     VALUES ($1, NULL, 'Triaged', $2, 'Imported from Excel')`,
+                    [triageId, req.user.id]
+                );
+                imported.push({ row: rowNum, pr_number });
+            } catch (err) {
+                if (err.code === '23505') {
+                    skipped.push({ row: rowNum, pr_number, reason: 'Duplicate PR Number — already exists' });
+                } else {
+                    skipped.push({ row: rowNum, pr_number, reason: err.message });
+                }
+            }
+        }
+
+        await client.query('COMMIT');
+        res.status(201).json({
+            imported: imported.length,
+            skipped: skipped.length,
+            total: rows.length,
+            details: { imported, skipped }
+        });
+    } catch (err) {
+        await client.query('ROLLBACK');
         res.status(500).json({ error: err.message });
     } finally {
         client.release();

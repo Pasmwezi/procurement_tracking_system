@@ -479,4 +479,186 @@ router.put('/:id/cancel', async (req, res) => {
     }
 });
 
+// POST /api/files/import — bulk import files from Excel (team leaders only)
+const multer = require('multer');
+const XLSX = require('xlsx');
+const uploadFiles = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+router.post('/import', uploadFiles.single('file'), async (req, res) => {
+    if (req.user.role !== 'team_leader') {
+        return res.status(403).json({ error: 'Only team leaders can import files' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    // Parse workbook
+    let rows;
+    try {
+        const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    } catch (e) {
+        return res.status(400).json({ error: 'Could not parse Excel file: ' + e.message });
+    }
+
+    if (!rows || rows.length === 0) {
+        return res.status(400).json({ error: 'Excel sheet is empty' });
+    }
+
+    // Normalise a column key
+    const norm = str => String(str || '').trim().toLowerCase().replace(/\s+/g, '_');
+
+    // Build per-row objects with normalised keys
+    const parsed = rows.map((raw, i) => {
+        const n = {};
+        for (const [k, v] of Object.entries(raw)) n[norm(k)] = String(v || '').trim();
+        return {
+            rowNum: i + 2,
+            pr_number:      n['pr_number'] || n['pr_no'] || n['pr'] || '',
+            title:          n['title'] || n['file_title'] || n['description'] || '',
+            process:        n['process'] || n['process_name'] || n['procurement_process'] || '',
+            officer:        n['officer'] || n['officer_name'] || n['assigned_officer'] || '',
+            assigned_date:  n['assigned_date'] || n['date_assigned'] || n['assignment_date'] || '',
+            step_order:     n['current_step'] || n['step_order'] || n['starting_step'] || '',
+        };
+    });
+
+    // Pre-fetch lookup caches
+    const officersRes = await pool.query(
+        "SELECT id, display_name FROM users WHERE role = 'officer' AND is_active = TRUE"
+    );
+    const officerMap = {};
+    for (const o of officersRes.rows) officerMap[o.display_name.toLowerCase()] = o.id;
+
+    const processesRes = await pool.query(
+        'SELECT DISTINCT process_name FROM process_steps'
+    );
+    const processNames = new Set(processesRes.rows.map(p => p.process_name.toLowerCase()));
+
+    const summary = { imported: 0, skipped: 0, total: parsed.length, details: { imported: [], skipped: [] } };
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        for (const row of parsed) {
+            // Validate required fields
+            if (!row.pr_number || !row.title || !row.process || !row.officer) {
+                summary.skipped++;
+                summary.details.skipped.push({
+                    row: row.rowNum,
+                    pr_number: row.pr_number || null,
+                    reason: `Missing required field(s): ${[
+                        !row.pr_number && 'PR Number',
+                        !row.title && 'Title',
+                        !row.process && 'Process',
+                        !row.officer && 'Officer'
+                    ].filter(Boolean).join(', ')}`
+                });
+                continue;
+            }
+
+            // Resolve officer
+            const officerId = officerMap[row.officer.toLowerCase()];
+            if (!officerId) {
+                summary.skipped++;
+                summary.details.skipped.push({ row: row.rowNum, pr_number: row.pr_number, reason: `Officer not found: "${row.officer}"` });
+                continue;
+            }
+
+            // Validate process
+            if (!processNames.has(row.process.toLowerCase())) {
+                // Try a case-insensitive match
+                const match = [...processNames].find(p => p === row.process.toLowerCase());
+                if (!match) {
+                    summary.skipped++;
+                    summary.details.skipped.push({ row: row.rowNum, pr_number: row.pr_number, reason: `Process not found: "${row.process}"` });
+                    continue;
+                }
+            }
+            // Get the real cased process_name from DB
+            const realProcess = processesRes.rows.find(p => p.process_name.toLowerCase() === row.process.toLowerCase()).process_name;
+
+            // Check for duplicate PR number
+            const dupCheck = await client.query('SELECT id FROM files WHERE pr_number = $1', [row.pr_number]);
+            if (dupCheck.rows.length > 0) {
+                summary.skipped++;
+                summary.details.skipped.push({ row: row.rowNum, pr_number: row.pr_number, reason: 'Duplicate PR Number — already exists' });
+                continue;
+            }
+
+            // Get process steps
+            const stepsResult = await client.query(
+                'SELECT * FROM process_steps WHERE process_name = $1 ORDER BY step_order',
+                [realProcess]
+            );
+            if (stepsResult.rows.length === 0) {
+                summary.skipped++;
+                summary.details.skipped.push({ row: row.rowNum, pr_number: row.pr_number, reason: 'No steps defined for process' });
+                continue;
+            }
+
+            const allSteps = stepsResult.rows;
+            const startDate = row.assigned_date
+                ? new Date(row.assigned_date.includes('T') ? row.assigned_date : `${row.assigned_date}T12:00:00`)
+                : new Date();
+            if (isNaN(startDate.getTime())) {
+                summary.skipped++;
+                summary.details.skipped.push({ row: row.rowNum, pr_number: row.pr_number, reason: `Invalid assigned date: "${row.assigned_date}"` });
+                continue;
+            }
+
+            const targetOrder = row.step_order ? parseInt(row.step_order) || 1 : 1;
+            const targetStep = allSteps.find(s => s.step_order === targetOrder) || allSteps[0];
+            const stepStartedAt = targetOrder <= 1 ? startDate : new Date();
+
+            // Insert file
+            const fileResult = await client.query(
+                `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+                [row.pr_number, row.title, realProcess, officerId, targetStep.id, stepStartedAt, startDate]
+            );
+            const file = fileResult.rows[0];
+
+            // Log steps (same logic as POST /)
+            if (targetOrder > 1) {
+                let runningDate = new Date(startDate);
+                for (const step of allSteps) {
+                    if (step.step_order < targetOrder) {
+                        const s = new Date(runningDate);
+                        const e = new Date(runningDate);
+                        e.setDate(e.getDate() + (step.sla_days || 1));
+                        runningDate = new Date(e);
+                        await client.query(
+                            'INSERT INTO file_step_log (file_id, step_id, started_at, completed_at, sla_met) VALUES ($1, $2, $3, $4, TRUE)',
+                            [file.id, step.id, s, e]
+                        );
+                    } else if (step.step_order === targetOrder) {
+                        await client.query(
+                            'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
+                            [file.id, step.id, stepStartedAt]
+                        );
+                        break;
+                    }
+                }
+            } else {
+                await client.query(
+                    'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
+                    [file.id, allSteps[0].id, startDate]
+                );
+            }
+
+            summary.imported++;
+            summary.details.imported.push({ row: row.rowNum, pr_number: row.pr_number, title: row.title });
+        }
+
+        await client.query('COMMIT');
+        res.json(summary);
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 module.exports = router;

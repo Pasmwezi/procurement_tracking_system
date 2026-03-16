@@ -2110,6 +2110,508 @@ adminStyle.textContent = `
         `;
 document.head.appendChild(adminStyle);
 
+// ===== Excel Import (Triage) =====
+let _importParsedRows = [];  // Rows parsed client-side, used for preview
+let _importFile = null;      // The raw File object to send to the backend
+
+function openImportTriageModal() {
+    _importParsedRows = [];
+    _importFile = null;
+    $('#importFileInput').value = '';
+    $('#importDropZone').style.display = '';
+    $('#importFileChosen').style.display = 'none';
+    $('#importPreviewWrap').style.display = 'none';
+    $('#importResultPanel').style.display = 'none';
+    $('#btnConfirmImport').disabled = true;
+
+    // Build template download URL using SheetJS
+    try {
+        const ws = XLSX.utils.aoa_to_sheet([
+            ['PR Number', 'Title', 'Business Owner', 'Estimated Value'],
+            ['PR-2026-001', 'Sample Procurement Item', 'Department of Finance', '50000'],
+        ]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Triage Import');
+        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+        const link = $('#importTemplateLink');
+        link.href = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${wbout}`;
+        link.download = 'triage_import_template.xlsx';
+        link.onclick = (e) => e.stopPropagation();
+    } catch (e) {
+        console.warn('XLSX not available for template yet');
+    }
+
+    openModal('modalImportTriage');
+}
+
+function _resetImportFile() {
+    _importParsedRows = [];
+    _importFile = null;
+    $('#importFileInput').value = '';
+    $('#importFileChosen').style.display = 'none';
+    $('#importDropZone').style.display = '';
+    $('#importPreviewWrap').style.display = 'none';
+    $('#importResultPanel').style.display = 'none';
+    $('#btnConfirmImport').disabled = true;
+}
+
+function handleImportFileSelect(file) {
+    if (!file) return;
+    const allowed = [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel'
+    ];
+    if (!allowed.includes(file.type) && !file.name.match(/\.(xlsx|xls)$/i)) {
+        showToast('Please select an .xlsx or .xls file', 'error');
+        return;
+    }
+
+    _importFile = file;
+    $('#importFileName').textContent = file.name;
+    $('#importDropZone').style.display = 'none';
+    $('#importFileChosen').style.display = 'flex';
+    $('#importPreviewWrap').style.display = 'none';
+    $('#importResultPanel').style.display = 'none';
+    $('#btnConfirmImport').disabled = true;
+
+    // Client-side parse for preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: 'array', cellDates: true });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+            if (!rows || rows.length === 0) {
+                showToast('The Excel sheet appears to be empty.', 'error');
+                _resetImportFile();
+                return;
+            }
+
+            // Normalise keys
+            const norm = str => String(str || '').trim().toLowerCase().replace(/\s+/g, '_');
+            _importParsedRows = rows.map((raw, i) => {
+                const n = {};
+                for (const [k, v] of Object.entries(raw)) n[norm(k)] = String(v || '').trim();
+                return {
+                    rowNum: i + 2,
+                    pr_number:      n['pr_number'] || n['pr_no'] || n['pr'] || n['purchase_requisition_number'] || n['pr_#'] || '',
+                    title:          n['title'] || n['file_title'] || n['description'] || '',
+                    business_owner: n['business_owner'] || n['owner'] || n['business_unit'] || '',
+                    estimated_value: n['estimated_value'] || n['value'] || n['amount'] || '',
+                };
+            });
+
+            renderImportPreview();
+            $('#btnConfirmImport').disabled = false;
+        } catch (err) {
+            showToast('Could not read file: ' + err.message, 'error');
+            _resetImportFile();
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function renderImportPreview() {
+    const rows = _importParsedRows;
+    const tbody = $('#importPreviewBody');
+    const wrap = $('#importPreviewWrap');
+
+    tbody.innerHTML = rows.map(r => {
+        const missing = [];
+        if (!r.pr_number) missing.push('PR Number');
+        if (!r.title) missing.push('Title');
+        if (!r.business_owner) missing.push('Business Owner');
+        const valid = missing.length === 0;
+        const statusHtml = valid
+            ? '<span class="import-row-ok">✓ Valid</span>'
+            : `<span class="import-row-err">⚠ Missing: ${escHtml(missing.join(', '))}</span>`;
+        return `<tr class="${valid ? '' : 'import-row-invalid'}">
+            <td>${r.rowNum}</td>
+            <td>${escHtml(r.pr_number) || '<span class="import-empty">—</span>'}</td>
+            <td>${escHtml(r.title) || '<span class="import-empty">—</span>'}</td>
+            <td>${escHtml(r.business_owner) || '<span class="import-empty">—</span>'}</td>
+            <td>${escHtml(r.estimated_value) || '—'}</td>
+            <td>${statusHtml}</td>
+        </tr>`;
+    }).join('');
+
+    const validCount = rows.filter(r => r.pr_number && r.title && r.business_owner).length;
+    const invalidCount = rows.length - validCount;
+    $('#importPreviewCount').textContent =
+        `${rows.length} row${rows.length !== 1 ? 's' : ''} detected · ${validCount} valid · ${invalidCount > 0 ? invalidCount + ' will be skipped' : 'all ready to import'}`;
+
+    wrap.style.display = '';
+}
+
+async function submitTriageImport() {
+    if (!_importFile) return;
+    const btn = $('#btnConfirmImport');
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+
+    const formData = new FormData();
+    formData.append('file', _importFile);
+
+    try {
+        const res = await fetch('/api/triage/import', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Import failed');
+
+        // Show result panel
+        const panel = $('#importResultPanel');
+        const skippedHtml = data.details.skipped.length > 0
+            ? `<div class="import-result-skipped"><strong>Skipped rows:</strong><ul>${
+                data.details.skipped.map(s => `<li>Row ${s.row}${s.pr_number ? ' (' + escHtml(s.pr_number) + ')' : ''}: ${escHtml(s.reason)}</li>`).join('')
+              }</ul></div>` : '';
+
+        panel.innerHTML = `
+            <div class="import-result-summary ${data.imported > 0 ? 'import-result-success' : 'import-result-warn'}">
+                <div class="import-result-stats">
+                    <span class="import-result-stat"><strong>${data.imported}</strong> imported</span>
+                    <span class="import-result-stat"><strong>${data.skipped}</strong> skipped</span>
+                    <span class="import-result-stat"><strong>${data.total}</strong> total rows</span>
+                </div>
+                ${skippedHtml}
+            </div>`;
+        panel.style.display = '';
+        $('#importPreviewWrap').style.display = 'none';
+        $('#importFileChosen').style.display = 'none';
+
+        if (data.imported > 0) {
+            showToast(`${data.imported} triage file${data.imported !== 1 ? 's' : ''} imported successfully`, 'success');
+            // Refresh triage list if on triage page
+            const activePage = document.querySelector('.page.active');
+            if (activePage && activePage.id === 'pageTriage') {
+                setTimeout(() => { if (typeof refreshTriageTable === 'function') refreshTriageTable(); }, 400);
+            }
+        } else {
+            showToast('No files were imported. Check the skipped rows.', 'info');
+        }
+
+        btn.textContent = 'Done';
+        btn.onclick = closeModal;
+        btn.disabled = false;
+    } catch (err) {
+        showToast(err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = origText;
+    }
+}
+
+// Drag-and-drop wiring
+(function () {
+    const dropZone = $('#importDropZone');
+
+    $('#btnImportTriage').addEventListener('click', openImportTriageModal);
+
+    $('#importFileInput').addEventListener('change', (e) => {
+        if (e.target.files[0]) handleImportFileSelect(e.target.files[0]);
+    });
+
+    $('#btnImportClear').addEventListener('click', () => {
+        _resetImportFile();
+        $('#importDropZone').style.display = '';
+    });
+
+    $('#btnConfirmImport').addEventListener('click', submitTriageImport);
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('import-drop-active');
+    });
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('import-drop-active');
+    });
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('import-drop-active');
+        const file = e.dataTransfer.files[0];
+        if (file) handleImportFileSelect(file);
+    });
+})();
+
+// ===== Excel Import (Files) =====
+let _filesImportParsedRows = [];
+let _filesImportFile = null;
+let _filesImportOfficers = [];   // { id, display_name }
+let _filesImportProcesses = [];  // string[]
+
+async function openImportFilesModal() {
+    _filesImportParsedRows = [];
+    _filesImportFile = null;
+    $('#filesImportFileInput').value = '';
+    $('#filesImportDropZone').style.display = '';
+    $('#filesImportFileChosen').style.display = 'none';
+    $('#filesImportPreviewWrap').style.display = 'none';
+    $('#filesImportResultPanel').style.display = 'none';
+    $('#btnConfirmFilesImport').disabled = true;
+    $('#btnConfirmFilesImport').textContent = 'Import';
+    $('#btnConfirmFilesImport').onclick = submitFilesImport;
+
+    // Load officers and processes for template + validation
+    try {
+        const [officersRes, processesRes] = await Promise.all([
+            api('/api/officers').catch(() => []),
+            api('/api/processes').catch(() => [])
+        ]);
+        _filesImportOfficers = (officersRes || []).filter(o => o.role === 'officer' || !o.role);
+        _filesImportProcesses = (processesRes || []).map(p => p.name || p.process_name).filter(Boolean);
+    } catch (_) {}
+
+    // Fallback: collect processes from filterProcess dropdown
+    if (_filesImportProcesses.length === 0) {
+        _filesImportProcesses = [...$('#filterProcess').options]
+            .map(o => o.value).filter(v => v !== '');
+    }
+
+    // Show available info
+    const infoEl = $('#filesImportAvailableInfo');
+    if (_filesImportOfficers.length > 0 || _filesImportProcesses.length > 0) {
+        infoEl.innerHTML =
+            `<small style="color:var(--text-muted)">` +
+            (_filesImportOfficers.length ? `Officers: ${_filesImportOfficers.map(o => `<strong>${escHtml(o.name)}</strong>`).join(', ')}. ` : '') +
+            (_filesImportProcesses.length ? `Processes: ${_filesImportProcesses.map(p => `<strong>${escHtml(p)}</strong>`).join(', ')}.` : '') +
+            `</small>`;
+    }
+
+    // Build template with real officer+process data
+    try {
+        const officerName = _filesImportOfficers[0]?.name || 'John Smith';
+        const processName = _filesImportProcesses[0] || 'Open Tender';
+        const ws = XLSX.utils.aoa_to_sheet([
+            ['PR Number', 'Title', 'Process', 'Officer', 'Assigned Date', 'Current Step'],
+            ['PR-2026-001', 'Sample Procurement File', processName, officerName, new Date().toISOString().slice(0,10), '1'],
+        ]);
+        // Set column widths
+        ws['!cols'] = [16,30,20,24,14,12].map(w => ({ wch: w }));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Files Import');
+        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+        const link = $('#filesImportTemplateLink');
+        link.href = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${wbout}`;
+        link.download = 'files_import_template.xlsx';
+        link.onclick = (e) => e.stopPropagation();
+    } catch (e) { /* xlsx not ready */ }
+
+    openModal('modalImportFiles');
+}
+
+function _resetFilesImportFile() {
+    _filesImportParsedRows = [];
+    _filesImportFile = null;
+    $('#filesImportFileInput').value = '';
+    $('#filesImportFileChosen').style.display = 'none';
+    $('#filesImportDropZone').style.display = '';
+    $('#filesImportPreviewWrap').style.display = 'none';
+    $('#filesImportResultPanel').style.display = 'none';
+    $('#btnConfirmFilesImport').disabled = true;
+}
+
+function handleFilesImportFileSelect(file) {
+    if (!file) return;
+    const allowed = [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel'
+    ];
+    if (!allowed.includes(file.type) && !file.name.match(/\.(xlsx|xls)$/i)) {
+        showToast('Please select an .xlsx or .xls file', 'error');
+        return;
+    }
+
+    _filesImportFile = file;
+    $('#filesImportFileName').textContent = file.name;
+    $('#filesImportDropZone').style.display = 'none';
+    $('#filesImportFileChosen').style.display = 'flex';
+    $('#filesImportPreviewWrap').style.display = 'none';
+    $('#filesImportResultPanel').style.display = 'none';
+    $('#btnConfirmFilesImport').disabled = true;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: 'array', cellDates: true });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+            if (!rows || rows.length === 0) {
+                showToast('The Excel sheet appears to be empty.', 'error');
+                _resetFilesImportFile();
+                return;
+            }
+
+            const norm = str => String(str || '').trim().toLowerCase().replace(/\s+/g, '_');
+            // Build known officer/process sets for client-side validation hints
+            const officerNames = new Set(_filesImportOfficers.map(o => o.name.toLowerCase()));
+            const processNamesSet = new Set(_filesImportProcesses.map(p => p.toLowerCase()));
+
+            _filesImportParsedRows = rows.map((raw, i) => {
+                const n = {};
+                for (const [k, v] of Object.entries(raw)) n[norm(k)] = String(v || '').trim();
+                const r = {
+                    rowNum: i + 2,
+                    pr_number:     n['pr_number'] || n['pr_no'] || n['pr'] || '',
+                    title:         n['title'] || n['file_title'] || n['description'] || '',
+                    process:       n['process'] || n['process_name'] || n['procurement_process'] || '',
+                    officer:       n['officer'] || n['officer_name'] || n['assigned_officer'] || '',
+                    assigned_date: n['assigned_date'] || n['date_assigned'] || n['assignment_date'] || '',
+                    step_order:    n['current_step'] || n['step_order'] || n['starting_step'] || '',
+                };
+                // Client-side validation hints
+                const missing = [];
+                if (!r.pr_number) missing.push('PR Number');
+                if (!r.title) missing.push('Title');
+                if (!r.process) missing.push('Process');
+                if (!r.officer) missing.push('Officer');
+                r._missing = missing;
+                r._officerUnknown = r.officer && officerNames.size > 0 && !officerNames.has(r.officer.toLowerCase());
+                r._processUnknown = r.process && processNamesSet.size > 0 && !processNamesSet.has(r.process.toLowerCase());
+                r._valid = missing.length === 0 && !r._officerUnknown && !r._processUnknown;
+                return r;
+            });
+
+            renderFilesImportPreview();
+            const hasValid = _filesImportParsedRows.some(r => r._valid);
+            $('#btnConfirmFilesImport').disabled = !hasValid;
+        } catch (err) {
+            showToast('Could not read file: ' + err.message, 'error');
+            _resetFilesImportFile();
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function renderFilesImportPreview() {
+    const rows = _filesImportParsedRows;
+    const tbody = $('#filesImportPreviewBody');
+
+    tbody.innerHTML = rows.map(r => {
+        let statusHtml;
+        if (r._missing.length > 0) {
+            statusHtml = `<span class="import-row-err">⚠ Missing: ${escHtml(r._missing.join(', '))}</span>`;
+        } else if (r._officerUnknown) {
+            statusHtml = `<span class="import-row-err">⚠ Unknown officer</span>`;
+        } else if (r._processUnknown) {
+            statusHtml = `<span class="import-row-err">⚠ Unknown process</span>`;
+        } else {
+            statusHtml = '<span class="import-row-ok">✓ Valid</span>';
+        }
+        return `<tr class="${r._valid ? '' : 'import-row-invalid'}">
+            <td>${r.rowNum}</td>
+            <td>${escHtml(r.pr_number) || '<span class="import-empty">—</span>'}</td>
+            <td>${escHtml(r.title) || '<span class="import-empty">—</span>'}</td>
+            <td>${escHtml(r.process) || '<span class="import-empty">—</span>'}</td>
+            <td>${escHtml(r.officer) || '<span class="import-empty">—</span>'}</td>
+            <td>${escHtml(r.assigned_date) || '—'}</td>
+            <td>${statusHtml}</td>
+        </tr>`;
+    }).join('');
+
+    const validCount = rows.filter(r => r._valid).length;
+    const invalidCount = rows.length - validCount;
+    $('#filesImportPreviewCount').textContent =
+        `${rows.length} row${rows.length !== 1 ? 's' : ''} detected · ${validCount} valid · ${invalidCount > 0 ? invalidCount + ' will be skipped' : 'all ready to import'}`;
+    $('#filesImportPreviewWrap').style.display = '';
+}
+
+async function submitFilesImport() {
+    if (!_filesImportFile) return;
+    const btn = $('#btnConfirmFilesImport');
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+
+    const formData = new FormData();
+    formData.append('file', _filesImportFile);
+
+    try {
+        const res = await fetch('/api/files/import', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Import failed');
+
+        const panel = $('#filesImportResultPanel');
+        const skippedHtml = data.details.skipped.length > 0
+            ? `<div class="import-result-skipped"><strong>Skipped rows:</strong><ul>${
+                data.details.skipped.map(s => `<li>Row ${s.row}${s.pr_number ? ' (' + escHtml(s.pr_number) + ')' : ''}: ${escHtml(s.reason)}</li>`).join('')
+              }</ul></div>` : '';
+
+        panel.innerHTML = `
+            <div class="import-result-summary ${data.imported > 0 ? 'import-result-success' : 'import-result-warn'}">
+                <div class="import-result-stats">
+                    <span class="import-result-stat"><strong>${data.imported}</strong> imported</span>
+                    <span class="import-result-stat"><strong>${data.skipped}</strong> skipped</span>
+                    <span class="import-result-stat"><strong>${data.total}</strong> total rows</span>
+                </div>
+                ${skippedHtml}
+            </div>`;
+        panel.style.display = '';
+        $('#filesImportPreviewWrap').style.display = 'none';
+        $('#filesImportFileChosen').style.display = 'none';
+
+        if (data.imported > 0) {
+            showToast(`${data.imported} file${data.imported !== 1 ? 's' : ''} imported successfully`, 'success');
+            // Refresh files table if on files page
+            const activePage = document.querySelector('.page.active');
+            if (activePage && activePage.id === 'pageFiles') {
+                setTimeout(() => { if (typeof loadFiles === 'function') loadFiles(); }, 400);
+            }
+        } else {
+            showToast('No files were imported. Check the skipped rows.', 'info');
+        }
+
+        btn.textContent = 'Done';
+        btn.onclick = closeModal;
+        btn.disabled = false;
+    } catch (err) {
+        showToast(err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = origText;
+    }
+}
+
+// Drag-and-drop wiring for Files import
+(function () {
+    const dropZone = $('#filesImportDropZone');
+
+    $('#btnImportFiles').addEventListener('click', openImportFilesModal);
+
+    $('#filesImportFileInput').addEventListener('change', (e) => {
+        if (e.target.files[0]) handleFilesImportFileSelect(e.target.files[0]);
+    });
+
+    $('#btnFilesImportClear').addEventListener('click', () => {
+        _resetFilesImportFile();
+        $('#filesImportDropZone').style.display = '';
+    });
+
+    $('#btnConfirmFilesImport').addEventListener('click', submitFilesImport);
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('import-drop-active');
+    });
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('import-drop-active');
+    });
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('import-drop-active');
+        const file = e.dataTransfer.files[0];
+        if (file) handleFilesImportFileSelect(file);
+    });
+})();
+
 // ===== Boot =====
 setupUserMenu();
 init();
