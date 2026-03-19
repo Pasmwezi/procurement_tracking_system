@@ -992,6 +992,10 @@ function renderContractDetail(file, contracts) {
                     Create New Contract
                 </h4>
                 <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div style="grid-column: 1 / -1;">
+                        <label>Contract Number</label>
+                        <input type="text" id="newContractNumber" class="text-input" placeholder="e.g. CON-2026-001" required>
+                    </div>
                     <div>
                         <label>Start Date</label>
                         <input type="date" id="newContractStart" class="text-input" required>
@@ -1000,10 +1004,21 @@ function renderContractDetail(file, contracts) {
                         <label>End Date</label>
                         <input type="date" id="newContractEnd" class="text-input" required>
                     </div>
-                </div>
-                <div class="form-group" style="margin-bottom: 20px;">
-                    <label>Optional Period (months)</label>
-                    <input type="number" id="newContractPeriod" class="text-input" placeholder="e.g. 12" min="0">
+                    <div>
+                        <label>Option Period?</label>
+                        <select id="newContractHasOptions" class="text-input" onchange="document.getElementById('optionsCountBlock').style.display = this.value === 'yes' ? 'block' : 'none';" required>
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+                    </div>
+                    <div id="optionsCountBlock" style="display: none;">
+                        <label>Number of option</label>
+                        <input type="number" id="newContractOptionsCount" class="text-input" min="1" placeholder="e.g. 2">
+                    </div>
+                    <div style="grid-column: 1 / -1;">
+                        <label>Contractor name</label>
+                        <input type="text" id="newContractContractor" class="text-input" placeholder="e.g. Acme Corp">
+                    </div>
                 </div>
                 <div style="display: flex; gap: 12px; justify-content: flex-end;">
                     <button class="btn btn-sm btn-secondary" onclick="document.getElementById('addContractBlock').style.display='none'">Cancel</button>
@@ -1049,7 +1064,7 @@ function renderContractDetail(file, contracts) {
                             <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(114, 57, 234, 0.1); display: flex; justify-content: center; align-items: center; border: 1px solid var(--border-accent); margin-right: 14px; color: var(--accent-light); font-weight: bold; font-size: 1.1rem; box-shadow: 0 2px 8px rgba(114, 57, 234, 0.1);">
                                 ${idx + 1}
                             </div>
-                            <h4 style="margin: 0; font-size: 1.1rem; color: var(--text-primary); font-weight: 600;">Contract Segment</h4>
+                            <h4 style="margin: 0; font-size: 1.1rem; color: var(--text-primary); font-weight: 600;">Contract ${c.contract_number ? escapeHtml(c.contract_number) : `Segment #${idx + 1}`}</h4>
                             ${amendedBadge}
                         </div>
                         ${isLeader ? `
@@ -1062,7 +1077,7 @@ function renderContractDetail(file, contracts) {
                         ` : ''}
                     </div>
                     
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; background: var(--bg-primary); padding: 14px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; background: var(--bg-primary); padding: 14px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
                         <div>
                             <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.05em;">Start Date</div>
                             <div style="color: var(--text-primary); font-weight: 500; font-size: 0.95rem;">${startStr}</div>
@@ -1074,9 +1089,15 @@ function renderContractDetail(file, contracts) {
                             </div>
                         </div>
                         <div>
-                            <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.05em;">Optional Period</div>
+                            <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.05em;">Options</div>
                             <div style="color: var(--text-primary); font-weight: 500; font-size: 0.95rem;">
-                                ${c.optional_period_months ? c.optional_period_months + ' mo' : '<span style="color:var(--text-muted)">N/A</span>'}
+                                ${c.has_options ? `Yes (${c.number_of_options || 0})` : '<span style="color:var(--text-muted)">No</span>'}
+                            </div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.05em;">Contractor</div>
+                            <div style="color: var(--text-primary); font-weight: 500; font-size: 0.95rem;">
+                                ${c.contractor_name ? escapeHtml(c.contractor_name) : '<span style="color:var(--text-muted)">N/A</span>'}
                             </div>
                         </div>
                     </div>
@@ -1088,6 +1109,7 @@ function renderContractDetail(file, contracts) {
                             <div style="display: flex; gap: 12px; align-items: stretch;">
                                 <input type="date" id="amendDate_${c.id}" class="text-input" style="flex: 1; max-width: 220px;" value="${effectiveEnd.split('T')[0]}">
                                 <button class="btn btn-primary" onclick="submitAmendContract(${c.id}, ${file.id})">Confirm Date</button>
+                                ${(c.has_options && c.number_of_options > 0) ? `<button type="button" class="btn btn-outline" style="border: 1px solid var(--accent); color: var(--accent); background: transparent;" onclick="exerciseOption(${c.id}, ${file.id}, '${effectiveEnd.split('T')[0]}')">Exercise Option (+1 Year)</button>` : ''}
                                 <button class="btn btn-secondary" onclick="document.getElementById('amendBlock_${c.id}').style.display='none'">Cancel</button>
                             </div>
                         </div>
@@ -1104,17 +1126,50 @@ function renderContractDetail(file, contracts) {
     panel.innerHTML = html;
 }
 
+function exerciseOption(contractId, fileId, currentEndDateStr) {
+    if (!confirm('Are you sure you want to exercise an option period? This will extend the contract by 1 year and decrement the remaining options.')) return;
+    
+    const currentDate = new Date(currentEndDateStr);
+    currentDate.setFullYear(currentDate.getFullYear() + 1);
+    
+    const newYear = currentDate.getFullYear();
+    const newMonth = String(currentDate.getMonth() + 1).padStart(2, '0');
+    const newDay = String(currentDate.getDate()).padStart(2, '0');
+    const newDateStr = `${newYear}-${newMonth}-${newDay}`;
+    
+    api(`/api/files/contracts/${contractId}/amend`, {
+        method: 'PUT',
+        body: JSON.stringify({ amended_end_date: newDateStr, exercise_option: true })
+    }).then(() => {
+        showToast('Option exercised successfully');
+        selectContractFile(fileId); // Refresh
+    }).catch(err => {
+        showToast(err.message, 'error');
+    });
+}
+
 async function submitNewContract(fileId) {
+    const contractNumber = $('#newContractNumber').value.trim();
     const start = $('#newContractStart').value;
     const end = $('#newContractEnd').value;
-    const period = parseInt($('#newContractPeriod').value) || 0;
+    const hasOptions = $('#newContractHasOptions').value === 'yes';
+    const optionsCount = hasOptions ? (parseInt($('#newContractOptionsCount').value) || 0) : 0;
+    const contractorName = $('#newContractContractor').value.trim();
     
+    if (!contractNumber) { showToast('Contract number is required', 'error'); return; }
     if (!start || !end) { showToast('Start and end dates are required', 'error'); return; }
     
     try {
         await api(`/api/files/${fileId}/contracts`, {
             method: 'POST',
-            body: JSON.stringify({ start_date: start, end_date: end, optional_period_months: period })
+            body: JSON.stringify({ 
+                contract_number: contractNumber, 
+                start_date: start, 
+                end_date: end, 
+                has_options: hasOptions,
+                number_of_options: optionsCount,
+                contractor_name: contractorName
+            })
         });
         showToast('Contract added successfully');
         selectContractFile(fileId); // Refresh 

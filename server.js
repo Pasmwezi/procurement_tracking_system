@@ -142,13 +142,24 @@ async function start() {
             CREATE TABLE IF NOT EXISTS contracts (
                 id SERIAL PRIMARY KEY,
                 file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                contract_number VARCHAR(100),
                 start_date DATE NOT NULL,
                 end_date DATE NOT NULL,
+                has_options BOOLEAN DEFAULT FALSE,
+                number_of_options INTEGER,
+                contractor_name VARCHAR(300),
                 optional_period_months INTEGER DEFAULT 12,
                 amended_end_date DATE,
                 created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
                 created_at TIMESTAMP DEFAULT NOW()
             )
+        `);
+        await pool.query(`
+            ALTER TABLE contracts 
+            ADD COLUMN IF NOT EXISTS contract_number VARCHAR(100),
+            ADD COLUMN IF NOT EXISTS has_options BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS number_of_options INTEGER,
+            ADD COLUMN IF NOT EXISTS contractor_name VARCHAR(300);
         `);
         console.log('✅ Migrations applied');
     } catch (err) {

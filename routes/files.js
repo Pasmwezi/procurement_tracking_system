@@ -680,9 +680,9 @@ router.post('/:id/contracts', async (req, res) => {
         return res.status(403).json({ error: 'Only team leaders can create contracts' });
     }
 
-    const { start_date, end_date, optional_period_months } = req.body;
-    if (!start_date || !end_date) {
-        return res.status(400).json({ error: 'start_date and end_date are required' });
+    const { contract_number, start_date, end_date, has_options, number_of_options, contractor_name } = req.body;
+    if (!start_date || !end_date || !contract_number) {
+        return res.status(400).json({ error: 'contract_number, start_date, and end_date are required' });
     }
 
     try {
@@ -694,9 +694,9 @@ router.post('/:id/contracts', async (req, res) => {
         }
 
         const result = await pool.query(
-            `INSERT INTO contracts (file_id, start_date, end_date, optional_period_months, created_by)
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [req.params.id, start_date, end_date, optional_period_months || 0, req.user.id]
+            `INSERT INTO contracts (file_id, contract_number, start_date, end_date, has_options, number_of_options, contractor_name, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+            [req.params.id, contract_number, start_date, end_date, has_options || false, number_of_options || null, contractor_name || null, req.user.id]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -710,16 +710,23 @@ router.put('/contracts/:contractId/amend', async (req, res) => {
         return res.status(403).json({ error: 'Only team leaders can amend contracts' });
     }
 
-    const { amended_end_date } = req.body;
+    const { amended_end_date, exercise_option } = req.body;
     if (!amended_end_date) {
         return res.status(400).json({ error: 'amended_end_date is required' });
     }
 
     try {
-        const result = await pool.query(
-            'UPDATE contracts SET amended_end_date = $1 WHERE id = $2 RETURNING *',
-            [amended_end_date, req.params.contractId]
-        );
+        let query = 'UPDATE contracts SET amended_end_date = $1';
+        let params = [amended_end_date];
+        
+        if (exercise_option) {
+            query += ', number_of_options = GREATEST(0, COALESCE(number_of_options, 0) - 1)';
+        }
+        
+        query += ' WHERE id = $2 RETURNING *';
+        params.push(req.params.contractId);
+        
+        const result = await pool.query(query, params);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Contract not found' });
         res.json(result.rows[0]);
     } catch (err) {
