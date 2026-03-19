@@ -3708,4 +3708,100 @@ body {
     font-size: 0.8rem;
     color: var(--text-secondary);
 }
-
+
+/* =========================================================================
+   Contracts Split Layout
+   ========================================================================= */
+
+.split-layout {
+    display: flex;
+    gap: 24px;
+    min-height: calc(100vh - 180px); /* Height below header approx */
+    align-items: stretch;
+}
+
+.split-left {
+    width: 380px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface2);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.split-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+    border-radius: var(--radius);
+    overflow-y: auto;
+}
+
+/* List Component Config */
+.list-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--surface1);
+}
+
+.list-header h2 {
+    margin: 0 0 16px 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+}
+
+.list-controls input {
+    width: 100%;
+    margin-bottom: 4px;
+}
+
+.list-content {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--bg-primary);
+}
+
+.list-item {
+    padding: 16px 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+}
+
+.list-item:hover {
+    background: rgba(114, 57, 234, 0.04);
+}
+
+.list-item.active {
+    background: rgba(114, 57, 234, 0.08); /* Primary color low opacity */
+    border-left-color: var(--primary);
+}
+
+.list-item-title {
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.list-item-sub {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}

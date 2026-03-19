@@ -942,84 +942,165 @@ function renderContractDetail(file, contracts) {
     const isLeader = currentUser.role === 'team_leader';
     
     let html = `
-        <div style="background: var(--surface2, #1e1e2e); border-radius: 12px; border: 1px solid var(--border); padding: 24px;">
-            <div style="margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px;">
-                <h2 style="margin: 0 0 8px; color: var(--text-main); font-size: 1.5rem;">${file.pr_number} — ${escHtml(file.title)}</h2>
-                <div style="display: flex; gap: 16px; color: var(--text-muted); font-size: 0.9rem;">
-                    <span><strong>Officer:</strong> ${escHtml(file.officer_name)}</span>
-                    <span><strong>Process:</strong> ${file.process_name.replace(/_/g, ' ')}</span>
+        <div class="card" style="margin-bottom: 24px; box-shadow: var(--shadow-sm);">
+            <div class="card-header" style="flex-direction: column; align-items: flex-start; gap: 6px; border-bottom: none; padding-bottom: 8px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                    <h2 style="font-size: 1.35rem; font-weight: 700; color: var(--text-primary); margin: 0; letter-spacing: -0.01em;">
+                        <span style="color: var(--accent-light); font-family: 'SF Mono', 'Fira Code', monospace; margin-right: 4px;">${file.pr_number}</span> &mdash; ${escHtml(file.title)}
+                    </h2>
+                    <span class="process-tag process-${file.process_name || 'sole_source'}">${(file.process_name || 'Standard').replace(/_/g, ' ').toUpperCase()}</span>
                 </div>
-            </div>
-            
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <h3 style="margin: 0;">Existing Contracts</h3>
-                ${isLeader ? `<button class="btn btn-sm btn-primary" onclick="document.getElementById('addContractBlock').style.display='block'">+ Add Contract</button>` : ''}
-            </div>
-            
-            ${isLeader ? `
-            <div id="addContractBlock" style="display:none; background: rgba(0,0,0,0.2); border: 1px solid var(--primary); border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-                <h4 style="margin: 0 0 12px; color: var(--primary);">Create New Contract</h4>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-                    <div>
-                        <label style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted)">Start Date</label>
-                        <input type="date" id="newContractStart" class="text-input" style="width:100%; margin-top:4px;" required>
-                    </div>
-                    <div>
-                        <label style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted)">End Date</label>
-                        <input type="date" id="newContractEnd" class="text-input" style="width:100%; margin-top:4px;" required>
+                <div style="font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 12px; margin-top: 4px;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        <span style="font-weight: 500;">${escHtml(file.officer_name)}</span>
                     </div>
                 </div>
-                <div style="margin-bottom: 16px;">
-                    <label style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted)">Optional Period (months)</label>
-                    <input type="number" id="newContractPeriod" class="text-input" style="width:100%; margin-top:4px;" value="12" min="0">
+            </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="font-size: 1.15rem; font-weight: 600; color: var(--text-primary); margin: 0; display: flex; align-items: center; gap: 8px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-light)" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                Associated Contracts
+            </h3>
+            ${isLeader ? `<button class="btn btn-sm btn-primary" onclick="document.getElementById('addContractBlock').style.display='block'">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg> Add Contract
+            </button>` : ''}
+        </div>
+        
+        ${isLeader ? `
+        <div id="addContractBlock" class="card" style="display:none; margin-bottom: 24px; border-color: var(--border-accent); box-shadow: var(--shadow-glow);">
+            <div class="card-body">
+                <h4 style="margin: 0 0 16px; color: var(--text-primary); font-size: 1.05rem; display: flex; align-items: center; gap: 8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                    Create New Contract
+                </h4>
+                <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div>
+                        <label>Start Date</label>
+                        <input type="date" id="newContractStart" class="text-input" required>
+                    </div>
+                    <div>
+                        <label>End Date</label>
+                        <input type="date" id="newContractEnd" class="text-input" required>
+                    </div>
                 </div>
-                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label>Optional Period (months)</label>
+                    <input type="number" id="newContractPeriod" class="text-input" placeholder="e.g. 12" min="0">
+                </div>
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
                     <button class="btn btn-sm btn-secondary" onclick="document.getElementById('addContractBlock').style.display='none'">Cancel</button>
-                    <button class="btn btn-sm btn-primary" onclick="submitNewContract(${file.id})">Save</button>
+                    <button class="btn btn-sm btn-primary" onclick="submitNewContract(${file.id})">Save Contract</button>
                 </div>
             </div>
-            ` : ''}
-            
-            <div id="contractsList">
+        </div>
+        ` : ''}
+        
+        <div id="contractsList">
     `;
     
     if (contracts.length === 0) {
-        html += `<div style="padding: 30px; text-align: center; color: var(--text-muted); background: rgba(0,0,0,0.1); border: 1px dashed var(--border); border-radius: 8px;">No contracts added yet.</div>`;
+        html += `
+            <div class="empty-state" style="padding: 48px 20px; text-align: center; border: 1px dashed var(--border-color); border-radius: var(--radius); background: rgba(255,255,255,0.01);">
+                <div style="width: 56px; height: 56px; border-radius: 50%; background: var(--bg-tertiary); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; border: 1px solid var(--border-color);">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                </div>
+                <h4 style="color: var(--text-secondary); margin: 0 0 8px; font-size: 1.1rem;">No Contracts Found</h4>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0; max-width: 300px; margin: 0 auto;">This file is completed but no contract segments have been linked yet.</p>
+            </div>
+        `;
     } else {
+        html += `<div style="display: grid; gap: 16px;">`;
         contracts.forEach((c, idx) => {
-            const startStr = new Date(c.start_date).toLocaleDateString();
+            const startStr = new Date(c.start_date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
             const effectiveEnd = c.amended_end_date || c.end_date;
-            const endStr = new Date(effectiveEnd).toLocaleDateString();
-            const origEnd = c.amended_end_date ? `<span style="text-decoration:line-through; font-size:0.85em; opacity:0.6; margin-left:8px;">${new Date(c.end_date).toLocaleDateString()}</span>` : '';
-            const amendedBadge = c.amended_end_date ? `<span style="background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.4); padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">Amended</span>` : '';
+            const endStr = new Date(effectiveEnd).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            const origEnd = c.amended_end_date ? `<span style="text-decoration:line-through; font-size:0.75rem; opacity:0.5; margin-left:8px;" title="Original End Date">${new Date(c.end_date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</span>` : '';
+            const amendedBadge = c.amended_end_date ? `<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25); margin-left: 10px;">Amended</span>` : '';
             
             html += `
-            <div style="background: var(--surface1, #252538); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div style="font-weight: 600;">Contract #${idx + 1} ${amendedBadge}</div>
-                    ${isLeader ? `<button class="btn btn-sm btn-secondary" onclick="document.getElementById('amendBlock_${c.id}').style.display='block'">Amend</button>` : ''}
-                </div>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; font-size: 0.85rem; color: var(--text-muted);">
-                    <div><strong>Start:</strong> ${startStr}</div>
-                    <div><strong>End:</strong> ${endStr} ${origEnd}</div>
-                    <div><strong>Opt. Period:</strong> ${c.optional_period_months} months</div>
-                </div>
-                
-                ${isLeader ? `
-                <div id="amendBlock_${c.id}" style="display:none; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border);">
-                    <label style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted);">New End Date</label>
-                    <div style="display: flex; gap: 8px; margin-top: 4px;">
-                        <input type="date" id="amendDate_${c.id}" class="text-input" style="flex:1;" value="${effectiveEnd.split('T')[0]}">
-                        <button class="btn btn-sm btn-primary" onclick="submitAmendContract(${c.id}, ${file.id})">Save</button>
-                        <button class="btn btn-sm btn-secondary" onclick="document.getElementById('amendBlock_${c.id}').style.display='none'">Cancel</button>
+            <div class="card" style="border-left: 3px solid var(--accent); transition: transform 0.2s;">
+                <div class="card-body" style="padding: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+                        <div style="display: flex; align-items: center;">
+                            <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(114, 57, 234, 0.1); display: flex; justify-content: center; align-items: center; border: 1px solid var(--border-accent); margin-right: 14px; color: var(--accent-light); font-weight: bold; font-size: 1.1rem; box-shadow: 0 2px 8px rgba(114, 57, 234, 0.1);">
+                                ${idx + 1}
+                            </div>
+                            <h4 style="margin: 0; font-size: 1.1rem; color: var(--text-primary); font-weight: 600;">Contract Segment</h4>
+                            ${amendedBadge}
+                        </div>
+                        ${isLeader ? `
+                        <button class="btn btn-sm btn-secondary" onclick="document.getElementById('amendBlock_${c.id}').style.display='block'" title="Extend contract end date">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                                <path d="M12 20h9"></path>
+                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                            </svg> Amend
+                        </button>
+                        ` : ''}
                     </div>
+                    
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; background: var(--bg-primary); padding: 14px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                        <div>
+                            <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.05em;">Start Date</div>
+                            <div style="color: var(--text-primary); font-weight: 500; font-size: 0.95rem;">${startStr}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.05em;">End Date</div>
+                            <div style="color: var(--text-primary); font-weight: 500; font-size: 0.95rem; display: flex; align-items: center;">
+                                ${endStr} ${origEnd}
+                            </div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.05em;">Optional Period</div>
+                            <div style="color: var(--text-primary); font-weight: 500; font-size: 0.95rem;">
+                                ${c.optional_period_months ? c.optional_period_months + ' mo' : '<span style="color:var(--text-muted)">N/A</span>'}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    ${isLeader ? `
+                    <div id="amendBlock_${c.id}" style="display:none; margin-top: 20px; padding-top: 20px; border-top: 1px dashed var(--border-color);">
+                        <div class="form-group" style="margin: 0;">
+                            <label style="color: var(--text-secondary); margin-bottom: 8px; font-size: 0.85rem;">New End Date</label>
+                            <div style="display: flex; gap: 12px; align-items: stretch;">
+                                <input type="date" id="amendDate_${c.id}" class="text-input" style="flex: 1; max-width: 220px;" value="${effectiveEnd.split('T')[0]}">
+                                <button class="btn btn-primary" onclick="submitAmendContract(${c.id}, ${file.id})">Confirm Date</button>
+                                <button class="btn btn-secondary" onclick="document.getElementById('amendBlock_${c.id}').style.display='none'">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                    ` : ''}
                 </div>
-                ` : ''}
             </div>
             `;
         });
+        html += `</div>`;
     }
-    html += `</div></div>`;
+    
+    html += `</div>`;
     panel.innerHTML = html;
 }
 
