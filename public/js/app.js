@@ -230,6 +230,7 @@ const pageTitles = {
     dashboard: 'Dashboard',
     triage: 'File Triage',
     files: 'Procurement Files',
+    contracts: 'Contracts',
     officers: 'Contracting Officers',
     notifications: 'Notifications',
     admin: 'Administration'
@@ -253,6 +254,7 @@ function navigateTo(page) {
     if (page === 'dashboard') loadDashboard();
     else if (page === 'triage') loadTriage();
     else if (page === 'files') loadFiles();
+    else if (page === 'contracts') loadContracts();
     else if (page === 'officers') loadOfficers();
     else if (page === 'notifications') loadNotifications();
     else if (page === 'admin') loadAdmin();
@@ -637,6 +639,7 @@ async function viewFileDetail(id) {
     try {
         const f = await api(`/api/files/${id}`);
         if (!f) return;
+        const contracts = f.status === 'Completed' ? await api(`/api/files/${id}/contracts`) : [];
 
         $('#detailTitle').innerHTML = `<span class="pr-accent">${f.pr_number}</span> &mdash; ${escHtml(f.title)}`;
 
@@ -675,8 +678,11 @@ async function viewFileDetail(id) {
                 <span class="meta-label">CURRENT STEP</span>
                 <span class="meta-value">${escHtml(f.current_step_name) || 'None'}</span>
             </div>
-        </div>
-        
+        </div>`;
+
+
+
+        html += `
         <h3 class="timeline-title">Step Timeline</h3>
         <div class="timeline-vertical">`;
 
@@ -848,7 +854,211 @@ $('#formNewFile').addEventListener('submit', async (e) => {
     } catch (err) { showToast(err.message, 'error'); }
 });
 
-// ===== Officers =====
+// ===== Contracts Page =====
+let contractFiles = [];
+let currentContractFile = null;
+
+async function loadContracts() {
+    try {
+        // Fetch only completed files for contract management
+        const url = '/api/files' + (currentUser.role === 'team_leader' && teamLeaderViewScope === 'team' ? '' : '?team_id=me');
+        const files = await api(url);
+        if (!files) return;
+        
+        contractFiles = files.filter(f => f.status === 'Completed');
+        renderContractFilesList(contractFiles);
+        
+        // Clear detail panel if current file is no longer in the list
+        if (currentContractFile && !contractFiles.find(f => f.id === currentContractFile.id)) {
+            currentContractFile = null;
+        }
+        
+        if (currentContractFile) {
+            // Re-select to refresh its info and contracts
+            selectContractFile(currentContractFile.id);
+        } else {
+            $('#contractDetailPanel').innerHTML = `
+                <div class="empty-state">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    <h3>Select a completed file</h3>
+                    <p>Choose a file from the list to manage its contracts.</p>
+                </div>
+            `;
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function renderContractFilesList(filesToRender) {
+    const list = $('#contractFilesList');
+    if (filesToRender.length === 0) {
+        list.innerHTML = `<div style="padding: 2rem; text-align: center; color: var(--text-muted)">No completed files found.</div>`;
+        return;
+    }
+    
+    list.innerHTML = filesToRender.map(f => `
+        <div class="list-item ${currentContractFile && currentContractFile.id === f.id ? 'active' : ''}" onclick="selectContractFile(${f.id})">
+            <div class="list-item-title">${f.pr_number} — ${escHtml(f.title)}</div>
+            <div class="list-item-sub">
+                Officer: ${escHtml(f.officer_name)} &bull; ${new Date(f.created_at).toLocaleDateString()}
+            </div>
+        </div>
+    `).join('');
+}
+
+$('#contractFileSearch').addEventListener('input', (e) => {
+    const term = e.target.value.toLowerCase();
+    const filtered = contractFiles.filter(f => 
+        f.title.toLowerCase().includes(term) ||
+        f.pr_number.toLowerCase().includes(term) ||
+        (f.officer_name && f.officer_name.toLowerCase().includes(term))
+    );
+    renderContractFilesList(filtered);
+});
+
+async function selectContractFile(id) {
+    const file = contractFiles.find(f => f.id === id);
+    if (!file) return;
+    currentContractFile = file;
+    renderContractFilesList(contractFiles); // updates active state
+    
+    try {
+        const contracts = await api(`/api/files/${id}/contracts`);
+        renderContractDetail(file, contracts || []);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function renderContractDetail(file, contracts) {
+    const panel = $('#contractDetailPanel');
+    const isLeader = currentUser.role === 'team_leader';
+    
+    let html = `
+        <div style="background: var(--surface2, #1e1e2e); border-radius: 12px; border: 1px solid var(--border); padding: 24px;">
+            <div style="margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px;">
+                <h2 style="margin: 0 0 8px; color: var(--text-main); font-size: 1.5rem;">${file.pr_number} — ${escHtml(file.title)}</h2>
+                <div style="display: flex; gap: 16px; color: var(--text-muted); font-size: 0.9rem;">
+                    <span><strong>Officer:</strong> ${escHtml(file.officer_name)}</span>
+                    <span><strong>Process:</strong> ${file.process_name.replace(/_/g, ' ')}</span>
+                </div>
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin: 0;">Existing Contracts</h3>
+                ${isLeader ? `<button class="btn btn-sm btn-primary" onclick="document.getElementById('addContractBlock').style.display='block'">+ Add Contract</button>` : ''}
+            </div>
+            
+            ${isLeader ? `
+            <div id="addContractBlock" style="display:none; background: rgba(0,0,0,0.2); border: 1px solid var(--primary); border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+                <h4 style="margin: 0 0 12px; color: var(--primary);">Create New Contract</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted)">Start Date</label>
+                        <input type="date" id="newContractStart" class="text-input" style="width:100%; margin-top:4px;" required>
+                    </div>
+                    <div>
+                        <label style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted)">End Date</label>
+                        <input type="date" id="newContractEnd" class="text-input" style="width:100%; margin-top:4px;" required>
+                    </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <label style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted)">Optional Period (months)</label>
+                    <input type="number" id="newContractPeriod" class="text-input" style="width:100%; margin-top:4px;" value="12" min="0">
+                </div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <button class="btn btn-sm btn-secondary" onclick="document.getElementById('addContractBlock').style.display='none'">Cancel</button>
+                    <button class="btn btn-sm btn-primary" onclick="submitNewContract(${file.id})">Save</button>
+                </div>
+            </div>
+            ` : ''}
+            
+            <div id="contractsList">
+    `;
+    
+    if (contracts.length === 0) {
+        html += `<div style="padding: 30px; text-align: center; color: var(--text-muted); background: rgba(0,0,0,0.1); border: 1px dashed var(--border); border-radius: 8px;">No contracts added yet.</div>`;
+    } else {
+        contracts.forEach((c, idx) => {
+            const startStr = new Date(c.start_date).toLocaleDateString();
+            const effectiveEnd = c.amended_end_date || c.end_date;
+            const endStr = new Date(effectiveEnd).toLocaleDateString();
+            const origEnd = c.amended_end_date ? `<span style="text-decoration:line-through; font-size:0.85em; opacity:0.6; margin-left:8px;">${new Date(c.end_date).toLocaleDateString()}</span>` : '';
+            const amendedBadge = c.amended_end_date ? `<span style="background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.4); padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">Amended</span>` : '';
+            
+            html += `
+            <div style="background: var(--surface1, #252538); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-weight: 600;">Contract #${idx + 1} ${amendedBadge}</div>
+                    ${isLeader ? `<button class="btn btn-sm btn-secondary" onclick="document.getElementById('amendBlock_${c.id}').style.display='block'">Amend</button>` : ''}
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; font-size: 0.85rem; color: var(--text-muted);">
+                    <div><strong>Start:</strong> ${startStr}</div>
+                    <div><strong>End:</strong> ${endStr} ${origEnd}</div>
+                    <div><strong>Opt. Period:</strong> ${c.optional_period_months} months</div>
+                </div>
+                
+                ${isLeader ? `
+                <div id="amendBlock_${c.id}" style="display:none; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border);">
+                    <label style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted);">New End Date</label>
+                    <div style="display: flex; gap: 8px; margin-top: 4px;">
+                        <input type="date" id="amendDate_${c.id}" class="text-input" style="flex:1;" value="${effectiveEnd.split('T')[0]}">
+                        <button class="btn btn-sm btn-primary" onclick="submitAmendContract(${c.id}, ${file.id})">Save</button>
+                        <button class="btn btn-sm btn-secondary" onclick="document.getElementById('amendBlock_${c.id}').style.display='none'">Cancel</button>
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+            `;
+        });
+    }
+    html += `</div></div>`;
+    panel.innerHTML = html;
+}
+
+async function submitNewContract(fileId) {
+    const start = $('#newContractStart').value;
+    const end = $('#newContractEnd').value;
+    const period = parseInt($('#newContractPeriod').value) || 0;
+    
+    if (!start || !end) { showToast('Start and end dates are required', 'error'); return; }
+    
+    try {
+        await api(`/api/files/${fileId}/contracts`, {
+            method: 'POST',
+            body: JSON.stringify({ start_date: start, end_date: end, optional_period_months: period })
+        });
+        showToast('Contract added successfully');
+        selectContractFile(fileId); // Refresh 
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function submitAmendContract(contractId, fileId) {
+    const newEnd = $(`#amendDate_${contractId}`).value;
+    if (!newEnd) { showToast('New end date is required', 'error'); return; }
+    
+    try {
+        await api(`/api/files/contracts/${contractId}/amend`, {
+            method: 'PUT',
+            body: JSON.stringify({ amended_end_date: newEnd })
+        });
+        showToast('Contract amended successfully');
+        selectContractFile(fileId); // Refresh
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+
 async function loadOfficers() {
     try {
         const url = '/api/officers' + (currentUser.role === 'team_leader' && teamLeaderViewScope === 'me' ? '?team_id=me' : '');

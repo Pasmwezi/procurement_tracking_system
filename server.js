@@ -138,6 +138,18 @@ async function start() {
                 created_at TIMESTAMP DEFAULT NOW()
             )
         `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS contracts (
+                id SERIAL PRIMARY KEY,
+                file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                optional_period_months INTEGER DEFAULT 12,
+                amended_end_date DATE,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
         console.log('✅ Migrations applied');
     } catch (err) {
         console.error('⚠️ Migration warning:', err.message);

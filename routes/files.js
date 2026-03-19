@@ -661,4 +661,70 @@ router.post('/import', uploadFiles.single('file'), async (req, res) => {
     }
 });
 
+// GET /api/files/:id/contracts — get all contracts for a file
+router.get('/:id/contracts', async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM contracts WHERE file_id = $1 ORDER BY created_at ASC',
+            [req.params.id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/files/:id/contracts — create a new contract (Team Leader only)
+router.post('/:id/contracts', async (req, res) => {
+    if (req.user.role !== 'team_leader') {
+        return res.status(403).json({ error: 'Only team leaders can create contracts' });
+    }
+
+    const { start_date, end_date, optional_period_months } = req.body;
+    if (!start_date || !end_date) {
+        return res.status(400).json({ error: 'start_date and end_date are required' });
+    }
+
+    try {
+        // Verify file is completed
+        const fileRes = await pool.query('SELECT status FROM files WHERE id = $1', [req.params.id]);
+        if (fileRes.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+        if (fileRes.rows[0].status !== 'Completed') {
+            return res.status(400).json({ error: 'Contracts can only be added to completed files' });
+        }
+
+        const result = await pool.query(
+            `INSERT INTO contracts (file_id, start_date, end_date, optional_period_months, created_by)
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [req.params.id, start_date, end_date, optional_period_months || 0, req.user.id]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// PUT /api/files/contracts/:contractId/amend — amend a contract's end date (Team Leader only)
+router.put('/contracts/:contractId/amend', async (req, res) => {
+    if (req.user.role !== 'team_leader') {
+        return res.status(403).json({ error: 'Only team leaders can amend contracts' });
+    }
+
+    const { amended_end_date } = req.body;
+    if (!amended_end_date) {
+        return res.status(400).json({ error: 'amended_end_date is required' });
+    }
+
+    try {
+        const result = await pool.query(
+            'UPDATE contracts SET amended_end_date = $1 WHERE id = $2 RETURNING *',
+            [amended_end_date, req.params.contractId]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Contract not found' });
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;

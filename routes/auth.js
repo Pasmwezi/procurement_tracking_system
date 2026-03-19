@@ -120,4 +120,17 @@ router.get('/me', async (req, res) => {
     }
 });
 
+// GET /api/auth/setup-status — public endpoint: tells login page if admin still uses default creds
+router.get('/setup-status', async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT password_changed FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1"
+        );
+        const changed = result.rows.length > 0 ? result.rows[0].password_changed : true;
+        res.json({ admin_password_changed: !!changed });
+    } catch (err) {
+        res.json({ admin_password_changed: true }); // fail safe — hide hint on error
+    }
+});
+
 module.exports = router;
