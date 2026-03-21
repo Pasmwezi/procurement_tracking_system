@@ -315,6 +315,7 @@
         <section class="page" id="pageFiles">
             <div class="page-actions">
                 <div class="filter-bar">
+                    <input type="text" id="searchFiles" class="select-input" placeholder="🔍 Search PR# or title..." style="min-width:200px;">
                     <select id="filterOfficer" class="select-input">
                         <option value="team_me" data-roles="team_leader">My Team</option>
                         <option value="">All Officers</option>
@@ -329,6 +330,14 @@
                     </select>
                 </div>
                 <div style="display:flex;gap:10px;">
+                    <button class="btn btn-secondary" id="btnExportFiles" data-roles="team_leader" title="Export current view to Excel">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Export Excel
+                    </button>
                     <button class="btn btn-secondary" id="btnImportFiles" data-roles="team_leader">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -409,6 +418,7 @@
         <section class="page" id="pageTriage">
             <div class="page-actions">
                 <div class="filter-bar">
+                    <input type="text" id="searchTriage" class="select-input" placeholder="🔍 Search PR# or title..." style="min-width:200px;">
                     <select id="filterTriageStatus" class="select-input">
                         <option value="">All Statuses</option>
                         <option value="Triaged">Triaged</option>
@@ -419,6 +429,14 @@
                     </select>
                 </div>
                 <div style="display:flex;gap:10px;">
+                    <button class="btn btn-secondary" id="btnExportTriage" title="Export current view to Excel">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Export Excel
+                    </button>
                     <button class="btn btn-secondary" id="btnImportTriage">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -859,6 +877,10 @@
                     <select id="inputCurrentStep" class="select-input">
                         <option value="">Step 1 (start from beginning)</option>
                     </select>
+                </div>
+                <div class="form-group">
+                    <label for="inputEstimatedValue">Estimated Value <span class="form-hint">(optional)</span></label>
+                    <input type="number" id="inputEstimatedValue" class="text-input" step="0.01" min="0" placeholder="e.g. 50000.00">
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-close>Cancel</button>
@@ -1303,7 +1325,7 @@
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="/js/app.js?v=3.0"></script>
+    <script src="/js/app.js?v=4.0"></script>
 </body>
 
 </html>

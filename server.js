@@ -161,6 +161,18 @@ async function start() {
             ADD COLUMN IF NOT EXISTS number_of_options INTEGER,
             ADD COLUMN IF NOT EXISTS contractor_name VARCHAR(300);
         `);
+        // Priority-1 schema additions
+        await pool.query(`
+            ALTER TABLE files
+            ADD COLUMN IF NOT EXISTS estimated_value DECIMAL(15,2),
+            ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+            ADD COLUMN IF NOT EXISTS notes TEXT;
+        `);
+        await pool.query(`
+            ALTER TABLE triage_files
+            ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+            ADD COLUMN IF NOT EXISTS notes TEXT;
+        `);
         console.log('✅ Migrations applied');
     } catch (err) {
         console.error('⚠️ Migration warning:', err.message);

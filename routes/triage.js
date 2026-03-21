@@ -158,7 +158,7 @@ router.post('/', async (req, res) => {
 
 // PUT /api/triage/:id — update triage file info
 router.put('/:id', async (req, res) => {
-    const { pr_number, title, estimated_value, business_owner } = req.body;
+    const { pr_number, title, estimated_value, business_owner, notes } = req.body;
     try {
         const result = await pool.query(
             `UPDATE triage_files SET
@@ -166,9 +166,10 @@ router.put('/:id', async (req, res) => {
                 title = COALESCE($2, title),
                 estimated_value = COALESCE($3, estimated_value),
                 business_owner = COALESCE($4, business_owner),
+                notes = COALESCE($5, notes),
                 updated_at = NOW()
-             WHERE id = $5 RETURNING *`,
-            [pr_number, title, estimated_value, business_owner, req.params.id]
+             WHERE id = $6 RETURNING *`,
+            [pr_number, title, estimated_value, business_owner, notes, req.params.id]
         );
         if (result.rows.length === 0) return res.status(404).json({ error: 'Triage file not found' });
         res.json(result.rows[0]);
@@ -200,10 +201,15 @@ router.put('/:id/status', async (req, res) => {
             updates.doc_deadline = deadline;
         }
 
+        // Store cancellation reason in dedicated column
+        const cancellationReason = (status === 'Cancelled' && req.body.cancellation_reason)
+            ? req.body.cancellation_reason : null;
+
         const result = await pool.query(
-            `UPDATE triage_files SET status = $1, doc_deadline = COALESCE($2, doc_deadline), updated_at = NOW()
-             WHERE id = $3 RETURNING *`,
-            [updates.status, updates.doc_deadline || null, req.params.id]
+            `UPDATE triage_files SET status = $1, doc_deadline = COALESCE($2, doc_deadline),
+             cancellation_reason = COALESCE($3, cancellation_reason), updated_at = NOW()
+             WHERE id = $4 RETURNING *`,
+            [updates.status, updates.doc_deadline || null, cancellationReason, req.params.id]
         );
 
         // Log status change
@@ -355,11 +361,11 @@ router.post('/:id/assign', async (req, res) => {
         const targetStep = allSteps.find(s => s.step_order === targetOrder) || allSteps[0];
         const stepStartedAt = targetOrder <= 1 ? startDate : new Date();
 
-        // Create the file in the files table
+        // Create the file in the files table (copy estimated_value from triage)
         const fileResult = await client.query(
-            `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-            [triageFile.pr_number, triageFile.title, process_name, officer_id, targetStep.id, stepStartedAt, startDate]
+            `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at, estimated_value)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+            [triageFile.pr_number, triageFile.title, process_name, officer_id, targetStep.id, stepStartedAt, startDate, triageFile.estimated_value || null]
         );
         const file = fileResult.rows[0];
 
@@ -422,6 +428,60 @@ router.post('/:id/assign', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
+    }
+});
+
+// GET /api/triage/export — export triage files as Excel (team leaders only)
+router.get('/export', async (req, res) => {
+    try {
+        let query = `
+            SELECT tf.pr_number, tf.title, tf.business_owner, tf.status,
+                   tf.estimated_value, tf.cancellation_reason, tf.notes,
+                   t.name AS team_name, u.display_name AS created_by_name,
+                   tf.created_at, tf.doc_deadline
+            FROM triage_files tf
+            LEFT JOIN teams t ON t.id = tf.team_id
+            LEFT JOIN users u ON u.id = tf.created_by
+        `;
+        const params = [];
+        const conditions = [];
+
+        if (req.user.teamId) {
+            params.push(req.user.teamId);
+            conditions.push(`tf.team_id = $${params.length}`);
+        }
+        if (req.query.status) { params.push(req.query.status); conditions.push(`tf.status = $${params.length}`); }
+        if (req.query.search) { params.push(`%${req.query.search}%`); conditions.push(`(tf.pr_number ILIKE $${params.length} OR tf.title ILIKE $${params.length})`); }
+
+        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+        query += ' ORDER BY tf.created_at DESC';
+
+        const result = await pool.query(query, params);
+
+        const rows = result.rows.map(tf => ({
+            'PR Number':            tf.pr_number,
+            'Title':                tf.title,
+            'Business Owner':       tf.business_owner,
+            'Status':               tf.status,
+            'Estimated Value':      tf.estimated_value != null ? parseFloat(tf.estimated_value) : '',
+            'Team':                 tf.team_name || '',
+            'Created By':           tf.created_by_name || '',
+            'Cancellation Reason':  tf.cancellation_reason || '',
+            'Notes':                tf.notes || '',
+            'Date Created':         tf.created_at ? new Date(tf.created_at).toISOString().split('T')[0] : '',
+            'Doc Deadline':         tf.doc_deadline ? new Date(tf.doc_deadline).toISOString().split('T')[0] : '',
+        }));
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(rows);
+        XLSX.utils.book_append_sheet(wb, ws, 'Triage');
+        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Disposition', `attachment; filename="triage_files_${new Date().toISOString().split('T')[0]}.xlsx"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.send(buf);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 

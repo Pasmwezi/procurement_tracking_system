@@ -21,6 +21,12 @@ router.get('/', async (req, res) => {
         const params = [];
         const conditions = [];
 
+        // free-text search across PR number + title
+        if (req.query.search) {
+            params.push(`%${req.query.search}%`);
+            conditions.push(`(f.pr_number ILIKE $${params.length} OR f.title ILIKE $${params.length})`);
+        }
+
         // Role-based scoping
         if (req.user.role === 'officer') {
             // Officers see only their own files
@@ -243,7 +249,7 @@ router.post('/', async (req, res) => {
         return res.status(403).json({ error: 'Only team leaders can create files' });
     }
 
-    const { pr_number, title, process_name, officer_id, assigned_date, current_step_order } = req.body;
+    const { pr_number, title, process_name, officer_id, assigned_date, current_step_order, estimated_value } = req.body;
     if (!pr_number || !title || !process_name || !officer_id) {
         return res.status(400).json({ error: 'pr_number, title, process_name, and officer_id are required' });
     }
@@ -268,9 +274,9 @@ router.post('/', async (req, res) => {
         const stepStartedAt = targetOrder <= 1 ? startDate : new Date();
 
         const fileResult = await client.query(
-            `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-            [pr_number, title, process_name, officer_id, targetStep.id, stepStartedAt, startDate]
+            `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at, estimated_value)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+            [pr_number, title, process_name, officer_id, targetStep.id, stepStartedAt, startDate, estimated_value || null]
         );
         const file = fileResult.rows[0];
 
@@ -457,10 +463,10 @@ router.put('/:id/cancel', async (req, res) => {
             [now, `CANCELLED: ${reason}`, req.params.id, file.current_step_id]
         );
 
-        // Update file status
+        // Update file status and store cancellation reason in dedicated column
         await client.query(
-            'UPDATE files SET status = $1, completed_at = $2 WHERE id = $3',
-            ['Cancelled', now, req.params.id]
+            'UPDATE files SET status = $1, completed_at = $2, cancellation_reason = $3 WHERE id = $4',
+            ['Cancelled', now, reason, req.params.id]
         );
 
         await client.query('COMMIT');
@@ -476,6 +482,91 @@ router.put('/:id/cancel', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
+    }
+});
+
+// POST /api/files/:id/notes — save notes on a file (team leader + officer)
+router.post('/:id/notes', async (req, res) => {
+    const { notes } = req.body;
+    if (notes === undefined) return res.status(400).json({ error: 'notes field is required' });
+
+    try {
+        // Officers can only update their own file's notes
+        if (req.user.role === 'officer') {
+            const check = await pool.query('SELECT officer_id FROM files WHERE id = $1', [req.params.id]);
+            if (check.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+            if (check.rows[0].officer_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        }
+        const result = await pool.query(
+            'UPDATE files SET notes = $1 WHERE id = $2 RETURNING id, notes',
+            [notes, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/files/export — export files as Excel (team leaders only)
+router.get('/export', async (req, res) => {
+    if (req.user.role !== 'team_leader') {
+        return res.status(403).json({ error: 'Only team leaders can export files' });
+    }
+
+    const XLSX = require('xlsx');
+    try {
+        let query = `
+      SELECT f.pr_number, f.title, f.process_name, f.status,
+             f.estimated_value, f.cancellation_reason, f.notes,
+             u.display_name AS officer_name,
+             ps.step_name AS current_step_name,
+             f.created_at, f.completed_at
+      FROM files f
+      JOIN users u ON u.id = f.officer_id
+      LEFT JOIN process_steps ps ON ps.id = f.current_step_id
+    `;
+        const params = [];
+        const conditions = [];
+
+        if (req.query.team_id === 'me' && req.user.teamId) {
+            params.push(req.user.teamId);
+            conditions.push(`u.team_id = $${params.length}`);
+        }
+        if (req.query.officer_id) { params.push(req.query.officer_id); conditions.push(`f.officer_id = $${params.length}`); }
+        if (req.query.status) { params.push(req.query.status); conditions.push(`f.status = $${params.length}`); }
+        if (req.query.process_name) { params.push(req.query.process_name); conditions.push(`f.process_name = $${params.length}`); }
+        if (req.query.search) { params.push(`%${req.query.search}%`); conditions.push(`(f.pr_number ILIKE $${params.length} OR f.title ILIKE $${params.length})`); }
+
+        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+        query += ' ORDER BY f.created_at DESC';
+
+        const result = await pool.query(query, params);
+
+        const rows = result.rows.map(f => ({
+            'PR Number':            f.pr_number,
+            'Title':                f.title,
+            'Process':              f.process_name.replace(/_/g, ' '),
+            'Officer':              f.officer_name,
+            'Current Step':         f.current_step_name || '',
+            'Status':               f.status,
+            'Estimated Value':      f.estimated_value != null ? parseFloat(f.estimated_value) : '',
+            'Cancellation Reason':  f.cancellation_reason || '',
+            'Notes':                f.notes || '',
+            'Date Assigned':        f.created_at ? new Date(f.created_at).toISOString().split('T')[0] : '',
+            'Date Completed':       f.completed_at ? new Date(f.completed_at).toISOString().split('T')[0] : '',
+        }));
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(rows);
+        XLSX.utils.book_append_sheet(wb, ws, 'Files');
+        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Disposition', `attachment; filename="procurement_files_${new Date().toISOString().split('T')[0]}.xlsx"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.send(buf);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 

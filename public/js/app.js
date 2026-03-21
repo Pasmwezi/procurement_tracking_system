@@ -533,7 +533,8 @@ async function refreshFilesTable() {
     const params = new URLSearchParams();
     const officer = $('#filterOfficer').value;
     const process = $('#filterProcess').value;
-    const status = $('#filterStatus').value;
+    const status  = $('#filterStatus').value;
+    const search  = $('#searchFiles').value;
 
     if (officer === 'team_me' && currentUser.role === 'team_leader') {
         params.set('team_id', 'me');
@@ -542,7 +543,8 @@ async function refreshFilesTable() {
     }
 
     if (process) params.set('process_name', process);
-    if (status) params.set('status', status);
+    if (status)  params.set('status', status);
+    if (search)  params.set('search', search);
 
     const files = await api(`/api/files?${params}`);
     if (!files) return;
@@ -751,11 +753,39 @@ async function viewFileDetail(id) {
             </div>`;
         }
 
+        // Cancellation reason (for cancelled files)
+        if (f.status === 'Cancelled' && f.cancellation_reason) {
+            html += `
+            <div class="modal-advance-area" style="margin-top: 16px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: var(--radius); padding: 14px 18px;">
+                <div style="font-size:0.75rem; text-transform:uppercase; color: var(--danger); font-weight:600; margin-bottom:6px;">Cancellation Reason</div>
+                <div style="color: var(--text-secondary);">${escHtml(f.cancellation_reason)}</div>
+            </div>`;
+        }
+
+        // Notes section
+        const isLeaderOrOfficer = currentUser.role === 'team_leader' || currentUser.role === 'officer';
+        html += `
+        <div style="margin-top: 24px;">
+            <h3 class="timeline-title">Notes</h3>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <textarea id="fileNotesInput" class="comment-input" style="min-height:90px;" placeholder="Add any notes or comments...">${escHtml(f.notes || '')}</textarea>
+                ${isLeaderOrOfficer ? `<button class="btn-save-comment" onclick="saveFileNotes(${f.id})">Save Notes</button>` : ''}
+            </div>
+        </div>`;
+
         $('#detailBody').innerHTML = html;
         openModal('modalFileDetail');
     } catch (err) {
         showToast(err.message, 'error');
     }
+}
+
+async function saveFileNotes(fileId) {
+    const notes = $('#fileNotesInput').value;
+    try {
+        await api(`/api/files/${fileId}/notes`, { method: 'POST', body: JSON.stringify({ notes }) });
+        showToast('Notes saved');
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
 async function saveStepComment(fileId, logId) {
@@ -801,6 +831,34 @@ async function cancelFile(id) {
     $(`#${id}`).addEventListener('change', refreshFilesTable);
 });
 
+// Live search on files
+$('#searchFiles').addEventListener('input', refreshFilesTable);
+
+// Export files (JWT-authenticated download)
+$('#btnExportFiles').addEventListener('click', async () => {
+    const params = new URLSearchParams();
+    const officer = $('#filterOfficer').value;
+    const process = $('#filterProcess').value;
+    const status  = $('#filterStatus').value;
+    const search  = $('#searchFiles').value;
+    if (officer === 'team_me' && currentUser.role === 'team_leader') params.set('team_id', 'me');
+    else if (officer && officer !== 'team_me') params.set('officer_id', officer);
+    if (process) params.set('process_name', process);
+    if (status)  params.set('status', status);
+    if (search)  params.set('search', search);
+    try {
+        const res = await fetch(`/api/files/export?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) { showToast('Export failed', 'error'); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `procurement_files_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
 // New file button
 $('#btnNewFile').addEventListener('click', async () => {
     // Populate process select
@@ -844,7 +902,8 @@ $('#formNewFile').addEventListener('submit', async (e) => {
                 process_name: $('#inputProcess').value,
                 officer_id: parseInt($('#inputOfficer').value),
                 assigned_date: $('#inputAssignedDate').value || undefined,
-                current_step_order: $('#inputCurrentStep').value || undefined
+                current_step_order: $('#inputCurrentStep').value || undefined,
+                estimated_value: $('#inputEstimatedValue').value ? parseFloat($('#inputEstimatedValue').value) : undefined
             })
         });
         closeModal();
@@ -1992,6 +2051,82 @@ async function refreshTriageTable() {
 
 $('#filterTriageStatus').addEventListener('change', refreshTriageTable);
 
+// Live search on triage
+$('#searchTriage').addEventListener('input', () => {
+    const searchTerm = $('#searchTriage').value;
+    const params = new URLSearchParams();
+    const status = $('#filterTriageStatus').value;
+    if (status) params.set('status', status);
+    if (searchTerm) params.set('search', searchTerm);
+    // Reload with search param
+    api(`/api/triage?${params}`).then(items => {
+        if (!items) return;
+        const tbody = $('#triageBody');
+        const empty = $('#triageEmpty');
+        if (items.length === 0) {
+            tbody.innerHTML = '';
+            empty.style.display = 'flex';
+            return;
+        }
+        empty.style.display = 'none';
+        tbody.innerHTML = items.map(t => {
+            const dateStr = new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const canAssign = t.status === 'Triaged';
+            const canManage = t.status === 'Triaged' || t.status === 'Missing Document(s)';
+            return `<tr>
+                <td><span class="pr-number">${escHtml(t.pr_number)}</span></td>
+                <td><div class="file-title-cell">${escHtml(t.title)}</div></td>
+                <td>${escHtml(t.business_owner)}</td>
+                <td>${formatCurrency(t.estimated_value)}</td>
+                <td>${escHtml(t.team_name || '—')}</td>
+                <td>${triageStatusBadge(t.status)}</td>
+                <td>
+                    <div class="date-cell">
+                        <div class="date-main">${dateStr}</div>
+                        <div class="date-sub">${timeAgo(t.created_at)}</div>
+                    </div>
+                </td>
+                <td>
+                    <div class="btn-action-group">
+                        <button class="btn-action btn-view" onclick="viewTriageDetail(${t.id})">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            View
+                        </button>
+                        ${canAssign ? `<button class="btn-action btn-advance" onclick="openAssignTriage(${t.id})">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" y1="8" x2="19" y2="14"></line><line x1="22" y1="11" x2="16" y2="11"></line></svg>
+                            Assign
+                        </button>` : ''}
+                        ${canManage ? `<button class="btn-action btn-view" onclick="openMissingDocs(${t.id})" style="color: var(--warning)">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+                            Docs
+                        </button>` : ''}
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+    }).catch(err => console.error('Triage search error:', err));
+});
+
+// Export triage (JWT-authenticated download)
+$('#btnExportTriage').addEventListener('click', async () => {
+    const params = new URLSearchParams();
+    const status = $('#filterTriageStatus').value;
+    const search = $('#searchTriage').value;
+    if (status) params.set('status', status);
+    if (search) params.set('search', search);
+    try {
+        const res = await fetch(`/api/triage/export?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) { showToast('Export failed', 'error'); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `triage_files_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
 // New triage
 $('#btnNewTriage').addEventListener('click', () => openModal('modalNewTriage'));
 $('#formNewTriage').addEventListener('submit', async (e) => {
@@ -2142,6 +2277,25 @@ async function viewTriageDetail(id) {
             </div>`;
         }
 
+        // Cancellation reason
+        if (t.status === 'Cancelled' && t.cancellation_reason) {
+            html += `
+            <div style="margin-top: 16px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: var(--radius); padding: 14px 18px;">
+                <div style="font-size:0.75rem; text-transform:uppercase; color: var(--danger); font-weight:600; margin-bottom:6px;">Cancellation Reason</div>
+                <div style="color: var(--text-secondary);">${escHtml(t.cancellation_reason)}</div>
+            </div>`;
+        }
+
+        // Notes section
+        html += `
+        <div style="margin-top: 24px;">
+            <h3 class="timeline-title">Notes</h3>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <textarea id="triageNotesInput" class="comment-input" style="min-height:90px;" placeholder="Add any notes or comments...">${escHtml(t.notes || '')}</textarea>
+                <button class="btn-save-comment" onclick="saveTriageNotes(${t.id})">Save Notes</button>
+            </div>
+        </div>`;
+
         // Status history timeline
         if (t.status_history && t.status_history.length > 0) {
             html += `<h3 class="timeline-title" style="margin-top:24px;">Status History</h3>
@@ -2197,13 +2351,22 @@ async function removeDoc(triageId, docId) {
     } catch (err) { showToast(err.message, 'error'); }
 }
 
+async function saveTriageNotes(triageId) {
+    const notes = $('#triageNotesInput').value;
+    try {
+        await api(`/api/triage/${triageId}`, { method: 'PUT', body: JSON.stringify({ notes }) });
+        showToast('Notes saved');
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
 async function cancelTriageFile(id) {
-    if (!confirm('Are you sure you want to cancel this triage file?')) return;
+    const reason = prompt('Enter cancellation reason (optional):');
     try {
         await api(`/api/triage/${id}/status`, {
-            method: 'PUT', body: JSON.stringify({ status: 'Cancelled' })
+            method: 'PUT',
+            body: JSON.stringify({ status: 'Cancelled', cancellation_reason: reason && reason.trim() ? reason.trim() : undefined })
         });
-        showToast('Triage file cancelled');
+        showToast('File cancelled');
         closeModal();
         loadTriage();
     } catch (err) { showToast(err.message, 'error'); }
