@@ -682,7 +682,27 @@ async function viewFileDetail(id) {
             </div>
         </div>`;
 
-
+        // Bids section (only for team_leader or the officer assigned to this file)
+        const canManageBids = currentUser.role === 'team_leader' || (currentUser.role === 'officer' && currentUser.id === f.officer_id);
+        if (canManageBids || f.status === 'Completed' || f.status === 'Active') {
+            html += `
+            <div style="margin: 24px 0 32px; padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-color); background: var(--bg-tertiary);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <h3 style="margin:0; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                        Bids & Evaluation
+                    </h3>
+                    ${canManageBids ? `<button class="btn btn-sm btn-secondary" onclick="openAddBid(${f.id})">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Add Bid
+                    </button>` : ''}
+                </div>
+                <div id="fileBidsList_${f.id}" class="bids-container" style="display:grid; gap:12px;">
+                    <div style="color:var(--text-muted); font-size:0.9rem;">Loading bids...</div>
+                </div>
+            </div>`;
+            setTimeout(() => renderBidsForFile(f.id, canManageBids), 0);
+        }
 
         html += `
         <h3 class="timeline-title">Step Timeline</h3>
@@ -1174,9 +1194,28 @@ function renderContractDetail(file, contracts) {
                         </div>
                     </div>
                     ` : ''}
+
+                    <!-- PO / Receipts / Invoices sub-panel -->
+                    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px dashed var(--border-color);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                            <h5 style="margin:0; font-size:0.92rem; font-weight:600; color:var(--text-secondary); display:flex; align-items:center; gap:6px;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-light)" stroke-width="2"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>
+                                Purchase Orders
+                            </h5>
+                            <button class="btn btn-sm btn-secondary" onclick="openAddPO(${c.id})">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                Add PO
+                            </button>
+                        </div>
+                        <div id="poList_${c.id}">
+                            <div style="color:var(--text-muted); font-size:0.85rem; padding:8px 0;">Loading POs...</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             `;
+            // Load POs async after render
+            setTimeout(() => renderPOsForContract(c.id), 0);
         });
         html += `</div>`;
     }
@@ -3124,3 +3163,566 @@ async function submitFilesImport() {
 // ===== Boot =====
 setupUserMenu();
 init();
+
+// ========================================
+// PRIORITY 2: VENDORS
+// ========================================
+
+async function loadVendors() {
+    try {
+        const statusStr = $('#filterVendorStatus').value;
+        const url = statusStr ? `/api/vendors?status=${statusStr}` : '/api/vendors';
+        vendorsCache = await api(url) || [];
+        renderVendorsList();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+let vendorsCache = [];
+
+function renderVendorsList() {
+    const term = $('#searchVendors').value.toLowerCase();
+    const tbody = $('#vendorsBody');
+    const empty = $('#vendorsEmpty');
+    
+    const filtered = vendorsCache.filter(v => {
+        return v.name.toLowerCase().includes(term) ||
+               (v.category && v.category.toLowerCase().includes(term)) ||
+               (v.registration_number && v.registration_number.toLowerCase().includes(term));
+    });
+    
+    if (filtered.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = 'block';
+    } else {
+        empty.style.display = 'none';
+        const isLeader = currentUser.role === 'team_leader';
+        tbody.innerHTML = filtered.map(v => `
+            <tr>
+                <td style="font-weight:500; color:var(--text-primary)">
+                    ${escapeHtml(v.name)}
+                    ${v.notes ? `<span title="${escapeHtml(v.notes)}" style="cursor:help;opacity:0.6;margin-left:6px;">ℹ️</span>` : ''}
+                </td>
+                <td>${escapeHtml(v.category || '-')}</td>
+                <td><span style="font-family:'SF Mono',monospace;font-size:0.85em;color:var(--text-muted)">${escapeHtml(v.registration_number || '-')}</span></td>
+                <td>${v.contact_email ? `<a href="mailto:${escapeHtml(v.contact_email)}" style="color:var(--accent-light)">${escapeHtml(v.contact_email)}</a>` : '-'}</td>
+                <td>${escapeHtml(v.contact_phone || '-')}</td>
+                <td>
+                    <span class="badge" style="
+                        background: ${v.status === 'Active' ? 'rgba(16,185,129,0.1)' : v.status === 'Inactive' ? 'rgba(156,163,175,0.1)' : 'rgba(239,68,68,0.1)'};
+                        color: ${v.status === 'Active' ? '#10b981' : v.status === 'Inactive' ? '#9ca3af' : '#ef4444'};
+                        border: 1px solid ${v.status === 'Active' ? 'rgba(16,185,129,0.2)' : v.status === 'Inactive' ? 'rgba(156,163,175,0.2)' : 'rgba(239,68,68,0.2)'};
+                    ">${v.status}</span>
+                </td>
+                <td>
+                    ${isLeader ? `
+                        <button class="btn-action btn-view" onclick='editVendor(${JSON.stringify(v).replace(/'/g, "&#39;")})' title="Edit">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                        </button>
+                    ` : ''}
+                </td>
+            </tr>
+        `).join('');
+    }
+}
+
+// Vendor events
+if ($('#searchVendors')) $('#searchVendors').addEventListener('input', renderVendorsList);
+if ($('#filterVendorStatus')) $('#filterVendorStatus').addEventListener('change', loadVendors);
+if ($('#btnNewVendor')) {
+    $('#btnNewVendor').addEventListener('click', () => {
+        $('#formVendor').reset();
+        $('#editVendorId').value = '';
+        $('#modalVendorTitle').textContent = 'Add Vendor';
+        $('#vendorStatusGroup').style.display = 'none'; // New vendors are always active initially
+        openModal('modalVendor');
+    });
+}
+if ($('#formVendor')) {
+    $('#formVendor').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = $('#editVendorId').value;
+        const payload = {
+            name: $('#inputVendorName').value,
+            category: $('#inputVendorCategory').value,
+            registration_number: $('#inputVendorReg').value,
+            contact_email: $('#inputVendorEmail').value,
+            contact_phone: $('#inputVendorPhone').value,
+            address: $('#inputVendorAddress').value,
+            notes: $('#inputVendorNotes').value,
+        };
+        if (id) payload.status = $('#inputVendorStatus').value;
+
+        try {
+            if (id) {
+                await api(`/api/vendors/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+                showToast('Vendor updated');
+            } else {
+                await api('/api/vendors', { method: 'POST', body: JSON.stringify(payload) });
+                showToast('Vendor created');
+            }
+            closeModal('modalVendor');
+            loadVendors();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.editVendor = function(v) {
+    $('#formVendor').reset();
+    $('#editVendorId').value = v.id;
+    $('#modalVendorTitle').textContent = 'Edit Vendor';
+    
+    $('#inputVendorName').value = v.name;
+    $('#inputVendorCategory').value = v.category || '';
+    $('#inputVendorReg').value = v.registration_number || '';
+    $('#inputVendorEmail').value = v.contact_email || '';
+    $('#inputVendorPhone').value = v.contact_phone || '';
+    $('#inputVendorAddress').value = v.address || '';
+    $('#inputVendorNotes').value = v.notes || '';
+    
+    $('#vendorStatusGroup').style.display = 'block';
+    $('#inputVendorStatus').value = v.status;
+    
+    openModal('modalVendor');
+};
+
+// ========================================
+// PRIORITY 2: BIDS
+// ========================================
+
+async function renderBidsForFile(fileId, canManage) {
+    const container = $(`#fileBidsList_${fileId}`);
+    if (!container) return;
+    try {
+        const bids = await api(`/api/bids?file_id=${fileId}`);
+        if (!bids || bids.length === 0) {
+            container.innerHTML = `<div style="color:var(--text-muted); font-size:0.9rem; font-style:italic; padding:8px 0;">No bids recorded for this file yet.</div>`;
+            return;
+        }
+        
+        const isLeader = currentUser.role === 'team_leader';
+        container.innerHTML = bids.map(b => {
+            const vendorDisp = b.vendor_name ? escapeHtml(b.vendor_name) : (escapeHtml(b.vendor_name_free) || 'Unknown');
+            const amtStr = b.bid_amount ? '$' + parseFloat(b.bid_amount).toLocaleString() : '-';
+            const techStr = b.technical_score ? parseFloat(b.technical_score) : '-';
+            const finStr = b.financial_score ? parseFloat(b.financial_score) : '-';
+            
+            let statusBadge = '';
+            if (b.is_winner) statusBadge = `<span class="badge" style="background:rgba(16,185,129,0.1); color:#10b981; border:1px solid rgba(16,185,129,0.2); margin-left:8px;">★ WINNER</span>`;
+            else if (b.disqualified) statusBadge = `<span class="badge" style="background:rgba(239,68,68,0.1); color:#ef4444; border:1px solid rgba(239,68,68,0.2); margin-left:8px;">Disqualified</span>`;
+            
+            return `
+            <div class="card" style="padding:14px 18px; border-left:3px solid ${b.is_winner ? '#10b981' : b.disqualified ? '#ef4444' : 'var(--border-color)'}">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+                    <div>
+                        <strong style="color:var(--text-primary); font-size:1.05rem;">${vendorDisp}</strong>
+                        ${statusBadge}
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">Submitted: ${b.submission_date ? b.submission_date.split('T')[0] : '-'} | By: ${escapeHtml(b.created_by_name)}</div>
+                    </div>
+                    ${canManage ? `
+                        <div style="display:flex; gap:6px;">
+                            ${isLeader && !b.is_winner && !b.disqualified ? `<button class="btn btn-sm" style="border:1px solid #10b981; color:#10b981; background:transparent;" onclick="markBidWinner(${b.id}, ${fileId})">Mark Winner</button>` : ''}
+                            <button class="btn-action" onclick='editBid(${JSON.stringify(b).replace(/'/g, "&#39;")})' title="Edit Bid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
+                            ${isLeader ? `<button class="btn-action" style="color:var(--danger)" onclick="deleteBid(${b.id}, ${fileId})" title="Delete Bid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+                <div style="display:flex; gap:24px; font-size:0.9rem; color:var(--text-secondary);">
+                    <div><span style="color:var(--text-muted); font-size:0.8rem; text-transform:uppercase;">Amount:</span> <strong>${amtStr}</strong></div>
+                    <div><span style="color:var(--text-muted); font-size:0.8rem; text-transform:uppercase;">Tech Score:</span> <strong>${techStr}</strong></div>
+                    <div><span style="color:var(--text-muted); font-size:0.8rem; text-transform:uppercase;">Fin Score:</span> <strong>${finStr}</strong></div>
+                </div>
+                ${b.disqualified && b.disqualification_reason ? `<div style="margin-top:8px; font-size:0.85rem; color:#ef4444;"><strong style="text-transform:uppercase; font-size:0.75rem;">Reason:</strong> ${escapeHtml(b.disqualification_reason)}</div>` : ''}
+                ${b.notes ? `<div style="margin-top:8px; font-size:0.85rem; color:var(--text-muted);"><strong style="text-transform:uppercase; font-size:0.75rem;">Notes:</strong> ${escapeHtml(b.notes)}</div>` : ''}
+            </div>
+            `;
+        }).join('');
+    } catch (err) {
+        container.innerHTML = `<div style="color:var(--danger);">Error loading bids: ${escapeHtml(err.message)}</div>`;
+    }
+}
+
+// Ensure the bid form toggles the disqualification reason field appropriately
+if ($('#inputBidDisqualified')) {
+    $('#inputBidDisqualified').addEventListener('change', (e) => {
+        $('#disqualReasonGroup').style.display = e.target.checked ? 'block' : 'none';
+        if (!e.target.checked) $('#inputBidDisqualReason').value = '';
+    });
+}
+
+window.openAddBid = async function(fileId) {
+    $('#formBid').reset();
+    $('#editBidId').value = '';
+    $('#bidFileId').value = fileId;
+    $('#modalBidTitle').textContent = 'Add Bid';
+    $('#disqualReasonGroup').style.display = 'none';
+    
+    // Populate vendor dropdown
+    try {
+        const vendors = await api('/api/vendors?status=Active');
+        const sel = $('#inputBidVendor');
+        sel.innerHTML = '<option value="">— Select from registry —</option>' + 
+            vendors.map(v => `<option value="${v.id}">${escapeHtml(v.name)}</option>`).join('');
+    } catch (err) {
+        console.error('Failed to load active vendors', err);
+    }
+    
+    openModal('modalBid');
+};
+
+window.editBid = async function(b) {
+    $('#formBid').reset();
+    $('#editBidId').value = b.id;
+    $('#bidFileId').value = b.file_id;
+    $('#modalBidTitle').textContent = 'Edit Bid';
+    
+    try {
+        const vendors = await api('/api/vendors');
+        const sel = $('#inputBidVendor');
+        sel.innerHTML = '<option value="">— Select from registry —</option>' + 
+            vendors.map(v => `<option value="${v.id}">${escapeHtml(v.name)} ${v.status !== 'Active' ? '(Inactive)' : ''}</option>`).join('');
+    } catch (err) {}
+    
+    $('#inputBidVendor').value = b.vendor_id || '';
+    $('#inputBidVendorFree').value = b.vendor_name_free || '';
+    $('#inputBidDate').value = b.submission_date ? b.submission_date.split('T')[0] : '';
+    $('#inputBidAmount').value = b.bid_amount || '';
+    $('#inputBidTechScore').value = b.technical_score || '';
+    $('#inputBidFinScore').value = b.financial_score || '';
+    $('#inputBidDisqualified').checked = b.disqualified;
+    $('#disqualReasonGroup').style.display = b.disqualified ? 'block' : 'none';
+    $('#inputBidDisqualReason').value = b.disqualification_reason || '';
+    $('#inputBidNotes').value = b.notes || '';
+    
+    openModal('modalBid');
+};
+
+if ($('#formBid')) {
+    $('#formBid').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const vendorId = $('#inputBidVendor').value;
+        const vendorFree = $('#inputBidVendorFree').value;
+        if (!vendorId && !vendorFree.trim()) {
+            showToast('Please select a registry vendor or type a free-text name', 'error');
+            return;
+        }
+        
+        const payload = {
+            file_id: $('#bidFileId').value,
+            vendor_id: vendorId || null,
+            vendor_name_free: vendorFree || null,
+            submission_date: $('#inputBidDate').value || null,
+            bid_amount: $('#inputBidAmount').value || null,
+            technical_score: $('#inputBidTechScore').value || null,
+            financial_score: $('#inputBidFinScore').value || null,
+            disqualified: $('#inputBidDisqualified').checked,
+            disqualification_reason: $('#inputBidDisqualReason').value || null,
+            notes: $('#inputBidNotes').value || null
+        };
+        
+        const bidId = $('#editBidId').value;
+        try {
+            if (bidId) {
+                await api(`/api/bids/${bidId}`, { method: 'PUT', body: JSON.stringify(payload) });
+                showToast('Bid updated');
+            } else {
+                await api('/api/bids', { method: 'POST', body: JSON.stringify(payload) });
+                showToast('Bid added');
+            }
+            closeModal('modalBid');
+            renderBidsForFile(payload.file_id, true);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.markBidWinner = async function(bidId, fileId) {
+    if (!confirm('Marking this bid as the winner will automatically set the contractor on the most recent contract segment for this file. Proceed?')) return;
+    try {
+        const res = await api(`/api/bids/${bidId}/winner`, { method: 'PUT', body: '{}' });
+        showToast('Winner set. Contract updated with contractor: ' + res.contractor_name);
+        renderBidsForFile(fileId, true);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+};
+
+window.deleteBid = async function(bidId, fileId) {
+    if (!confirm('Are you sure you want to delete this bid?')) return;
+    try {
+        await api(`/api/bids/${bidId}`, { method: 'DELETE' });
+        showToast('Bid deleted');
+        renderBidsForFile(fileId, true);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+};
+
+// ========================================
+// PRIORITY 2: POs & RECEIPTS & INVOICES
+// ========================================
+
+async function renderPOsForContract(contractId) {
+    const listDiv = $(`#poList_${contractId}`);
+    if (!listDiv) return;
+    try {
+        const pos = await api(`/api/purchase-orders?contract_id=${contractId}`);
+        if (!pos || pos.length === 0) {
+            listDiv.innerHTML = `<div style="font-size:0.85rem; color:var(--text-muted); padding:8px 0; font-style:italic;">No POs issued yet.</div>`;
+            return;
+        }
+        
+        const isLeader = currentUser.role === 'team_leader';
+        
+        let html = '<div style="display:flex; flex-direction:column; gap:16px;">';
+        for (const po of pos) {
+            const hasReceipts = parseInt(po.receipt_count) > 0;
+            const hasInvoices = parseInt(po.invoice_count) > 0;
+            
+            // Status coloring
+            let poStatusClr = 'var(--text-muted)';
+            if (po.status === 'Open') poStatusClr = 'var(--accent-light)';
+            if (po.status === 'Received') poStatusClr = '#f59e0b';
+            if (po.status === 'Closed') poStatusClr = '#10b981';
+            
+            html += `
+            <div class="card" style="border: 1px solid var(--border-color); box-shadow:none; padding:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; padding-bottom:12px; border-bottom:1px dashed var(--border-color);">
+                    <div>
+                        <div style="font-weight:600; font-size:1.05rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+                            ${escapeHtml(po.po_number)}
+                            <span class="badge" style="background:transparent; border:1px solid ${poStatusClr}; color:${poStatusClr}; font-weight:600;">${po.status}</span>
+                        </div>
+                        <div style="font-size:0.85rem; color:var(--text-secondary); margin-top:4px;">
+                            Date: ${po.po_date.split('T')[0]} &nbsp;|&nbsp; Amount: $${parseFloat(po.amount).toLocaleString()} &nbsp;|&nbsp; By: ${escapeHtml(po.created_by_name)}
+                        </div>
+                        ${po.description ? `<div style="font-size:0.85rem; color:var(--text-muted); margin-top:6px;">${escapeHtml(po.description)}</div>` : ''}
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                        <button class="btn btn-sm" style="background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color);" onclick='editPO(${JSON.stringify(po).replace(/'/g, "&#39;")})'>Edit PO</button>
+                    </div>
+                </div>
+                
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+                    <!-- Receipts Column -->
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="font-size:0.8rem; font-weight:600; text-transform:uppercase; color:var(--text-secondary);">Goods Receipts (${po.receipt_count})</span>
+                            <button class="btn-action" title="Add Receipt" onclick="openAddReceipt(${po.id}, ${contractId})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+                        </div>
+                        <div id="receiptList_${po.id}" style="font-size:0.85rem; color:var(--text-muted);">
+                            ${hasReceipts ? `<button class="btn-action" style="font-size:0.85rem; text-decoration:underline;" onclick="loadReceipts(${po.id})">View ${po.receipt_count} receipt(s)</button>` : 'No receipts yet.'}
+                        </div>
+                    </div>
+                    
+                    <!-- Invoices Column -->
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="font-size:0.8rem; font-weight:600; text-transform:uppercase; color:var(--text-secondary);">Invoices (${po.invoice_count})</span>
+                            <button class="btn-action" title="Add Invoice" onclick="openAddInvoice(${po.id}, ${contractId})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+                        </div>
+                        <div id="invoiceList_${po.id}" style="font-size:0.85rem; color:var(--text-muted);">
+                            ${hasInvoices ? `<button class="btn-action" style="font-size:0.85rem; text-decoration:underline;" onclick="loadInvoices(${po.id}, ${contractId}, ${isLeader})">View ${po.invoice_count} invoice(s)</button>` : 'No invoices yet.'}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+        html += '</div>';
+        listDiv.innerHTML = html;
+        
+    } catch (err) {
+        listDiv.innerHTML = `<div style="color:var(--danger); font-size:0.85rem;">Error loading POs: ${escapeHtml(err.message)}</div>`;
+    }
+}
+
+// PO actions
+window.openAddPO = function(contractId) {
+    $('#formPO').reset();
+    $('#editPOId').value = '';
+    $('#poContractId').value = contractId;
+    $('#modalPOTitle').textContent = 'Add Purchase Order';
+    openModal('modalPO');
+};
+
+window.editPO = function(po) {
+    $('#formPO').reset();
+    $('#editPOId').value = po.id;
+    $('#poContractId').value = po.contract_id;
+    $('#inputPONumber').value = po.po_number;
+    $('#inputPODate').value = po.po_date.split('T')[0];
+    $('#inputPOAmount').value = po.amount;
+    $('#inputPODescription').value = po.description || '';
+    $('#modalPOTitle').textContent = 'Edit Purchase Order';
+    openModal('modalPO');
+};
+
+if ($('#formPO')) {
+    $('#formPO').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = {
+            contract_id: $('#poContractId').value,
+            po_number: $('#inputPONumber').value,
+            po_date: $('#inputPODate').value,
+            amount: $('#inputPOAmount').value,
+            description: $('#inputPODescription').value || null
+        };
+        const poId = $('#editPOId').value;
+        try {
+            if (poId) await api(`/api/purchase-orders/${poId}`, { method: 'PUT', body: JSON.stringify(payload) });
+            else await api('/api/purchase-orders', { method: 'POST', body: JSON.stringify(payload) });
+            closeModal('modalPO');
+            showToast(poId ? 'PO updated' : 'PO created');
+            renderPOsForContract(payload.contract_id);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+// Receipts
+window.openAddReceipt = function(poId, contractId) {
+    $('#formReceipt').reset();
+    $('#receiptPOId').value = poId;
+    // stash contractId for refreshing
+    $('#formReceipt').dataset.contractId = contractId;
+    $('#inputReceiptDate').value = new Date().toISOString().split('T')[0];
+    openModal('modalReceipt');
+};
+
+if ($('#formReceipt')) {
+    $('#formReceipt').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const poId = $('#receiptPOId').value;
+        const payload = {
+            receipt_date: $('#inputReceiptDate').value,
+            received_quantity: $('#inputReceiptQty').value || null,
+            received_by_name: $('#inputReceiptBy').value || null,
+            notes: $('#inputReceiptNotes').value || null
+        };
+        try {
+            await api(`/api/purchase-orders/${poId}/receipts`, { method: 'POST', body: JSON.stringify(payload) });
+            closeModal('modalReceipt');
+            showToast('Receipt logged');
+            // Refresh the POs view to reflect new count and possibly new status "Received"
+            const contractId = $('#formReceipt').dataset.contractId;
+            if (contractId) renderPOsForContract(contractId);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.loadReceipts = async function(poId) {
+    const rDiv = $(`#receiptList_${poId}`);
+    rDiv.innerHTML = 'Loading...';
+    try {
+        const lists = await api(`/api/purchase-orders/${poId}/receipts`);
+        if (lists.length === 0) { rDiv.innerHTML = 'No receipts.'; return; }
+        rDiv.innerHTML = lists.map(r => `
+            <div style="background:rgba(255,255,255,0.03); border-radius:4px; padding:6px; margin-bottom:4px; border:1px solid var(--border-color);">
+                <strong>${r.receipt_date.split('T')[0]}</strong> &mdash; 
+                Qty: ${r.received_quantity || '-'} &mdash; By: ${escapeHtml(r.received_by_name || r.created_by_name)}
+                ${r.notes ? `<div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(r.notes)}</div>` : ''}
+            </div>
+        `).join('');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+};
+
+// Invoices
+window.openAddInvoice = function(poId, contractId) {
+    $('#formInvoice').reset();
+    $('#invoicePOId').value = poId;
+    $('#formInvoice').dataset.contractId = contractId; // stash for refresh
+    openModal('modalInvoice');
+};
+
+if ($('#formInvoice')) {
+    $('#formInvoice').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const poId = $('#invoicePOId').value;
+        const payload = {
+            invoice_number: $('#inputInvoiceNumber').value,
+            invoice_date: $('#inputInvoiceDate').value,
+            amount: $('#inputInvoiceAmount').value,
+            due_date: $('#inputInvoiceDue').value || null,
+            notes: $('#inputInvoiceNotes').value || null
+        };
+        try {
+            await api(`/api/purchase-orders/${poId}/invoices`, { method: 'POST', body: JSON.stringify(payload) });
+            closeModal('modalInvoice');
+            showToast('Invoice logged');
+            const contractId = $('#formInvoice').dataset.contractId;
+            if (contractId) renderPOsForContract(contractId);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.loadInvoices = async function(poId, contractId, isLeader) {
+    const rDiv = $(`#invoiceList_${poId}`);
+    rDiv.innerHTML = 'Loading...';
+    try {
+        const invoices = await api(`/api/purchase-orders/${poId}/invoices`);
+        if (invoices.length === 0) { rDiv.innerHTML = 'No invoices.'; return; }
+        rDiv.innerHTML = invoices.map(i => {
+            let clr = 'var(--text-muted)';
+            if (i.status === 'Approved') clr = '#f59e0b';
+            if (i.status === 'Paid') clr = '#10b981';
+            if (i.status === 'Rejected') clr = '#ef4444';
+            
+            const dropdownId = `invoiceStatus_${i.id}`;
+            const selectHtml = isLeader ? `
+                <select id="${dropdownId}" onchange="changeInvoiceStatus(${i.id}, this.value, ${poId}, ${contractId})" style="margin-left:auto; font-size:0.75rem; padding:2px 4px; background:var(--bg-primary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:3px;">
+                    <option value="Pending" ${i.status === 'Pending' ? 'selected' : ''}>Pending</option>
+                    <option value="Approved" ${i.status === 'Approved' ? 'selected' : ''}>Approved</option>
+                    <option value="Paid" ${i.status === 'Paid' ? 'selected' : ''}>Paid</option>
+                    <option value="Rejected" ${i.status === 'Rejected' ? 'selected' : ''}>Rejected</option>
+                </select>
+            ` : `<span style="margin-left:auto; font-size:0.75rem; font-weight:bold; color:${clr};">${i.status}</span>`;
+
+            return `
+            <div style="background:rgba(255,255,255,0.03); border-radius:4px; padding:6px; margin-bottom:4px; border:1px solid var(--border-color); display:flex; flex-direction:column; gap:4px;">
+                <div style="display:flex; align-items:center;">
+                    <strong>${escapeHtml(i.invoice_number)}</strong> &nbsp;|&nbsp; $${parseFloat(i.amount).toLocaleString()}
+                    ${selectHtml}
+                </div>
+                <div style="color:var(--text-secondary); font-size:0.75rem;">
+                    Date: ${i.invoice_date.split('T')[0]} ${i.due_date ? `&nbsp;|&nbsp; Due: ${i.due_date.split('T')[0]}` : ''}
+                </div>
+            </div>
+            `;
+        }).join('');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+};
+
+window.changeInvoiceStatus = async function(invoiceId, status, poId, contractId) {
+    try {
+        await api(`/api/invoices/${invoiceId}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
+        showToast('Invoice status updated');
+        // Refresh invoice list
+        const isLeader = currentUser.role === 'team_leader';
+        loadInvoices(poId, contractId, isLeader);
+    } catch (err) {
+        showToast(err.message, 'error');
+        // Re-load to reset select if failed
+        const isLeader = currentUser.role === 'team_leader';
+        loadInvoices(poId, contractId, isLeader);
+    }
+};
+
+// Ensure loading the vendors view triggers fetch
+const origLoadPage = window.loadPage;
+window.loadPage = function(page) {
+    if (page === 'vendors') loadVendors();
+};

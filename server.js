@@ -13,6 +13,9 @@ const processesRouter = require('./routes/processes');
 const notificationsRouter = require('./routes/notifications');
 const triageRouter = require('./routes/triage');
 const { checkSLAs } = require('./services/slaChecker');
+const vendorsRouter = require('./routes/vendors');
+const bidsRouter = require('./routes/bids');
+const purchaseOrdersRouter = require('./routes/purchaseOrders');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,6 +47,11 @@ app.use('/api/files', requireAuth, requireRole('team_leader', 'officer'), filesR
 app.use('/api/processes', requireAuth, processesRouter);
 app.use('/api/notifications', requireAuth, requireRole('team_leader', 'officer'), notificationsRouter);
 app.use('/api/triage', requireAuth, requireRole('team_leader'), triageRouter);
+
+// Priority-2 routes
+app.use('/api/vendors', requireAuth, requireRole('team_leader', 'officer'), vendorsRouter);
+app.use('/api/bids', requireAuth, requireRole('team_leader', 'officer'), bidsRouter);
+app.use('/api/purchase-orders', requireAuth, requireRole('team_leader', 'officer'), purchaseOrdersRouter);
 
 // Manual SLA check trigger (team_leader only)
 app.post('/api/sla-check', requireAuth, requireRole('team_leader'), async (req, res) => {
@@ -172,6 +180,80 @@ async function start() {
             ALTER TABLE triage_files
             ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
             ADD COLUMN IF NOT EXISTS notes TEXT;
+        `);
+        // Priority-2 schema additions
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS vendors (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(300) NOT NULL UNIQUE,
+                registration_number VARCHAR(100),
+                contact_email VARCHAR(200),
+                contact_phone VARCHAR(50),
+                address TEXT,
+                category VARCHAR(100),
+                status VARCHAR(20) DEFAULT 'Active' CHECK (status IN ('Active','Blacklisted','Inactive')),
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS bids (
+                id SERIAL PRIMARY KEY,
+                file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+                vendor_id INTEGER REFERENCES vendors(id) ON DELETE SET NULL,
+                vendor_name_free TEXT,
+                submission_date DATE,
+                bid_amount DECIMAL(15,2),
+                technical_score DECIMAL(5,2),
+                financial_score DECIMAL(5,2),
+                disqualified BOOLEAN DEFAULT FALSE,
+                disqualification_reason TEXT,
+                is_winner BOOLEAN DEFAULT FALSE,
+                notes TEXT,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS purchase_orders (
+                id SERIAL PRIMARY KEY,
+                contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+                po_number VARCHAR(100) NOT NULL UNIQUE,
+                po_date DATE NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                description TEXT,
+                status VARCHAR(30) DEFAULT 'Open' CHECK (status IN ('Open','Received','Closed','Cancelled')),
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS goods_receipts (
+                id SERIAL PRIMARY KEY,
+                po_id INTEGER REFERENCES purchase_orders(id) ON DELETE CASCADE,
+                receipt_date DATE NOT NULL,
+                received_quantity DECIMAL(10,2),
+                received_by_name VARCHAR(200),
+                notes TEXT,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS invoices (
+                id SERIAL PRIMARY KEY,
+                contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+                po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL,
+                invoice_number VARCHAR(100) NOT NULL,
+                invoice_date DATE NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                status VARCHAR(30) DEFAULT 'Pending' CHECK (status IN ('Pending','Approved','Rejected','Paid')),
+                due_date DATE,
+                paid_date DATE,
+                notes TEXT,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
         `);
         console.log('✅ Migrations applied');
     } catch (err) {
