@@ -10,6 +10,30 @@ async function canAccessFile(user, fileId) {
     return check.rows[0].officer_id === user.id;
 }
 
+// Helper: verify if file has reached solicitation step
+async function canEnterBids(fileId) {
+    const fileRes = await pool.query(`
+        SELECT f.process_name, ps.step_order 
+        FROM files f
+        LEFT JOIN process_steps ps ON ps.id = f.current_step_id
+        WHERE f.id = $1
+    `, [fileId]);
+    if (fileRes.rows.length === 0 || !fileRes.rows[0].step_order) return false;
+    
+    const { process_name, step_order } = fileRes.rows[0];
+    if (process_name === 'sole_source') return step_order >= 3;
+
+    const solicReq = await pool.query(`
+        SELECT COALESCE(MIN(step_order), 999) as min_order
+        FROM process_steps
+        WHERE process_name = $1
+        AND (step_name ILIKE '%solicit%' OR step_name ILIKE '%tendering%')
+        AND step_name NOT ILIKE '%drafting%'
+    `, [process_name]);
+
+    return step_order >= solicReq.rows[0].min_order;
+}
+
 // GET /api/bids?file_id= — list bids for a file
 router.get('/', async (req, res) => {
     const { file_id } = req.query;
@@ -50,6 +74,9 @@ router.post('/', async (req, res) => {
     try {
         if (!(await canAccessFile(req.user, file_id))) {
             return res.status(403).json({ error: 'Access denied' });
+        }
+        if (!(await canEnterBids(file_id))) {
+            return res.status(400).json({ error: 'Bids can only be entered during or after the Solicitation step.' });
         }
 
         // Auto-register vendor if submitted via free text
@@ -105,6 +132,9 @@ router.put('/:id', async (req, res) => {
 
         if (!(await canAccessFile(req.user, bid.file_id))) {
             return res.status(403).json({ error: 'Access denied' });
+        }
+        if (!(await canEnterBids(bid.file_id))) {
+            return res.status(400).json({ error: 'Bids can only be modified during or after the Solicitation step.' });
         }
 
         const { submission_date,

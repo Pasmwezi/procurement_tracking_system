@@ -685,16 +685,9 @@ async function viewFileDetail(id) {
         // Bids section (only for team_leader or the officer assigned to this file)
         const canManageBids = currentUser.role === 'team_leader' || (currentUser.role === 'officer' && currentUser.id === f.officer_id);
         if (canManageBids || f.status === 'Completed' || f.status === 'Active') {
-            html += `
-            <div style="margin: 24px 0 32px; padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-color); background: var(--bg-tertiary);">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
-                    <div>
-                        <h3 style="margin:0; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                            Bids & Evaluation
-                        </h3>
-                        ${f.basis_of_selection ? `<div style="font-size:0.85rem; color:var(--text-muted); margin-top:6px;">Selection Method: <strong style="color:var(--text-primary); text-transform:capitalize;">${f.basis_of_selection.replace(/_/g, ' ')}</strong></div>` : ''}
-                    </div>
+            let bidActionsHtml = '';
+            if (f.can_enter_bids) {
+                bidActionsHtml = `
                     <div style="display:flex; gap:8px;">
                         ${canManageBids && currentUser.role === 'team_leader' ? `
                         <button class="btn btn-sm btn-secondary" onclick="openBasisOfSelection(${f.id})">
@@ -710,14 +703,32 @@ async function viewFileDetail(id) {
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                             Add Bid
                         </button>` : ''}
+                    </div>`;
+            } else {
+                bidActionsHtml = `
+                    <div style="font-size:0.85rem; color:var(--warning); background:rgba(245, 158, 11, 0.1); padding:6px 12px; border-radius:var(--radius); border:1px solid rgba(245, 158, 11, 0.2);">
+                        ⚠️ Bids can only be entered during or after the Solicitation step.
+                    </div>`;
+            }
+
+            html += `
+            <div style="margin: 24px 0 32px; padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-color); background: var(--bg-tertiary);">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
+                    <div>
+                        <h3 style="margin:0; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                            Bids & Evaluation
+                        </h3>
+                        ${f.basis_of_selection ? `<div style="font-size:0.85rem; color:var(--text-muted); margin-top:6px;">Selection Method: <strong style="color:var(--text-primary); text-transform:capitalize;">${f.basis_of_selection.replace(/_/g, ' ')}</strong></div>` : ''}
                     </div>
+                    ${bidActionsHtml}
                 </div>
                 <div id="evaluationResults_${f.id}" style="display:none; margin-bottom: 16px; padding: 16px; background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: var(--radius);"></div>
                 <div id="fileBidsList_${f.id}" class="bids-container" style="display:grid; gap:12px;">
                     <div style="color:var(--text-muted); font-size:0.9rem;">Loading bids...</div>
                 </div>
             </div>`;
-            setTimeout(() => renderBidsForFile(f.id, canManageBids), 0);
+            setTimeout(() => renderBidsForFile(f.id, canManageBids && f.can_enter_bids), 0);
         }
 
         html += `

@@ -196,7 +196,18 @@ router.get('/:id', async (req, res) => {
     try {
         const fileResult = await pool.query(`
       SELECT f.*, u.display_name AS officer_name, u.email AS officer_email,
-             ps.step_name AS current_step_name, ps.sla_days, ps.cum_days, ps.step_order
+             ps.step_name AS current_step_name, ps.sla_days, ps.cum_days, ps.step_order,
+             (
+                CASE WHEN f.process_name = 'sole_source' THEN (ps.step_order >= 3)
+                ELSE (
+                   ps.step_order >= (
+                      SELECT COALESCE(MIN(step_order), 999) FROM process_steps 
+                      WHERE process_name = f.process_name 
+                      AND (step_name ILIKE '%solicit%' OR step_name ILIKE '%tendering%')
+                      AND step_name NOT ILIKE '%drafting%'
+                   )
+                ) END
+             ) AS can_enter_bids
       FROM files f
       JOIN users u ON u.id = f.officer_id
       LEFT JOIN process_steps ps ON ps.id = f.current_step_id
@@ -416,7 +427,18 @@ router.put('/:id/advance', async (req, res) => {
 
         const updatedFile = await pool.query(`
       SELECT f.*, u.display_name AS officer_name, ps.step_name AS current_step_name, ps.sla_days, ps.step_order,
-             (SELECT COUNT(*) FROM process_steps WHERE process_name = f.process_name) AS total_steps
+             (SELECT COUNT(*) FROM process_steps WHERE process_name = f.process_name) AS total_steps,
+             (
+                CASE WHEN f.process_name = 'sole_source' THEN (ps.step_order >= 3)
+                ELSE (
+                   ps.step_order >= (
+                      SELECT COALESCE(MIN(step_order), 999) FROM process_steps 
+                      WHERE process_name = f.process_name 
+                      AND (step_name ILIKE '%solicit%' OR step_name ILIKE '%tendering%')
+                      AND step_name NOT ILIKE '%drafting%'
+                   )
+                ) END
+             ) AS can_enter_bids
       FROM files f
       JOIN users u ON u.id = f.officer_id
       LEFT JOIN process_steps ps ON ps.id = f.current_step_id
