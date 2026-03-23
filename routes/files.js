@@ -825,4 +825,72 @@ router.put('/contracts/:contractId/amend', async (req, res) => {
     }
 });
 
+// PUT /api/files/:id/basis-of-selection — save evaluation method config (team leaders only)
+router.put('/:id/basis-of-selection', async (req, res) => {
+    if (req.user.role !== 'team_leader') {
+        return res.status(403).json({ error: 'Only team leaders can configure the basis of selection' });
+    }
+
+    const {
+        basis_of_selection,
+        minimum_points_threshold,
+        technical_weight_percent,
+        price_weight_percent,
+        maximum_technical_points
+    } = req.body;
+
+    const validMethods = ['lowest_price', 'lowest_price_per_point', 'highest_combined_rating'];
+    if (basis_of_selection && !validMethods.includes(basis_of_selection)) {
+        return res.status(400).json({ error: `Invalid basis_of_selection. Must be one of: ${validMethods.join(', ')}` });
+    }
+
+    // Validate weights for highest_combined_rating
+    if (basis_of_selection === 'highest_combined_rating') {
+        if (technical_weight_percent == null || price_weight_percent == null) {
+            return res.status(400).json({ error: 'technical_weight_percent and price_weight_percent are required for highest_combined_rating' });
+        }
+        const sum = parseFloat(technical_weight_percent) + parseFloat(price_weight_percent);
+        if (Math.abs(sum - 100) > 0.01) {
+            return res.status(400).json({ error: 'technical_weight_percent and price_weight_percent must sum to 100' });
+        }
+        if (maximum_technical_points == null || parseFloat(maximum_technical_points) <= 0) {
+            return res.status(400).json({ error: 'maximum_technical_points is required and must be > 0 for highest_combined_rating' });
+        }
+    }
+
+    // Validate threshold requirement for point-based methods
+    if (['lowest_price_per_point', 'highest_combined_rating'].includes(basis_of_selection)) {
+        if (minimum_points_threshold == null) {
+            return res.status(400).json({ error: 'minimum_points_threshold is required for point-based selection methods' });
+        }
+    }
+
+    try {
+        const result = await pool.query(
+            `UPDATE files SET
+                basis_of_selection = $1,
+                minimum_points_threshold = $2,
+                technical_weight_percent = $3,
+                price_weight_percent = $4,
+                maximum_technical_points = $5
+             WHERE id = $6
+             RETURNING id, basis_of_selection, minimum_points_threshold,
+                       technical_weight_percent, price_weight_percent, maximum_technical_points`,
+            [
+                basis_of_selection || null,
+                minimum_points_threshold != null ? parseFloat(minimum_points_threshold) : null,
+                technical_weight_percent != null ? parseFloat(technical_weight_percent) : null,
+                price_weight_percent != null ? parseFloat(price_weight_percent) : null,
+                maximum_technical_points != null ? parseFloat(maximum_technical_points) : null,
+                req.params.id
+            ]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;
+

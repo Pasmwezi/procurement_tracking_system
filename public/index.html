@@ -1054,11 +1054,11 @@
                         <label for="inputBidAmount">Bid Amount</label>
                         <input type="number" id="inputBidAmount" class="text-input" step="0.01" min="0" placeholder="0.00">
                     </div>
-                    <div class="form-group">
-                        <label for="inputBidTechScore">Technical Score <span class="form-hint">(0–100)</span></label>
+                    <div class="form-group" id="bidTechScoreGroup">
+                        <label for="inputBidTechScore" id="labelBidTechScore">Technical Score <span class="form-hint" id="hintBidTechScore">(0–100)</span></label>
                         <input type="number" id="inputBidTechScore" class="text-input" step="0.01" min="0" max="100" placeholder="e.g. 85">
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" id="bidFinScoreGroup">
                         <label for="inputBidFinScore">Financial Score <span class="form-hint">(0–100)</span></label>
                         <input type="number" id="inputBidFinScore" class="text-input" step="0.01" min="0" max="100" placeholder="e.g. 90">
                     </div>
@@ -1077,6 +1077,49 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-close>Cancel</button>
                     <button type="submit" class="btn btn-primary">Save Bid</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Basis of Selection Configuration Modal -->
+        <div class="modal" id="modalBasisOfSelection" style="display:none;">
+            <div class="modal-header">
+                <h2>Configure Basis of Selection</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formBasisOfSelection" class="modal-body">
+                <input type="hidden" id="bosFileId">
+                <div class="form-group">
+                    <label for="inputBosMethod">Evaluation Method *</label>
+                    <select id="inputBosMethod" class="select-input" required>
+                        <option value="">— Select a method —</option>
+                        <option value="lowest_price">Lowest Price</option>
+                        <option value="lowest_price_per_point">Lowest Price Per Point</option>
+                        <option value="highest_combined_rating">Highest Combined Rating</option>
+                    </select>
+                </div>
+                <div class="form-group" id="bosThresholdGroup">
+                    <label for="inputBosMinimumPoints">Minimum Technical Points Threshold <span class="form-hint">(optional)</span></label>
+                    <input type="number" id="inputBosMinimumPoints" class="text-input" step="0.01" min="0" placeholder="e.g. 70">
+                    <span class="form-hint">Bids scoring below this will be considered non-responsive.</span>
+                </div>
+                <div class="form-group" id="bosMaxPointsGroup" style="display:none;">
+                    <label for="inputBosMaxPoints">Maximum Technical Points Available *</label>
+                    <input type="number" id="inputBosMaxPoints" class="text-input" step="1" min="1" placeholder="e.g. 100">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;display:none;" id="bosWeightsGroup">
+                    <div class="form-group">
+                        <label for="inputBosTechWeight">Technical Weight (%) *</label>
+                        <input type="number" id="inputBosTechWeight" class="text-input" step="1" min="0" max="100" placeholder="e.g. 70">
+                    </div>
+                    <div class="form-group">
+                        <label for="inputBosPriceWeight">Price Weight (%) *</label>
+                        <input type="number" id="inputBosPriceWeight" class="text-input" step="1" min="0" max="100" placeholder="e.g. 30">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Configuration</button>
                 </div>
             </form>
         </div>

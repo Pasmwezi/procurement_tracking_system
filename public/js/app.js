@@ -687,16 +687,32 @@ async function viewFileDetail(id) {
         if (canManageBids || f.status === 'Completed' || f.status === 'Active') {
             html += `
             <div style="margin: 24px 0 32px; padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-color); background: var(--bg-tertiary);">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-                    <h3 style="margin:0; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                        Bids & Evaluation
-                    </h3>
-                    ${canManageBids ? `<button class="btn btn-sm btn-secondary" onclick="openAddBid(${f.id})">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                        Add Bid
-                    </button>` : ''}
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
+                    <div>
+                        <h3 style="margin:0; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                            Bids & Evaluation
+                        </h3>
+                        ${f.basis_of_selection ? `<div style="font-size:0.85rem; color:var(--text-muted); margin-top:6px;">Selection Method: <strong style="color:var(--text-primary); text-transform:capitalize;">${f.basis_of_selection.replace(/_/g, ' ')}</strong></div>` : ''}
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        ${canManageBids && currentUser.role === 'team_leader' ? `
+                        <button class="btn btn-sm btn-secondary" onclick="openBasisOfSelection(${f.id})">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                            Selection Config
+                        </button>` : ''}
+                        ${f.basis_of_selection && canManageBids ? `
+                        <button class="btn btn-sm btn-primary" onclick="evaluateBids(${f.id})" style="background:var(--accent); border-color:var(--accent);">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                            Evaluate
+                        </button>` : ''}
+                        ${canManageBids ? `<button class="btn btn-sm btn-secondary" onclick="openAddBid(${f.id})">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                            Add Bid
+                        </button>` : ''}
+                    </div>
                 </div>
+                <div id="evaluationResults_${f.id}" style="display:none; margin-bottom: 16px; padding: 16px; background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: var(--radius);"></div>
                 <div id="fileBidsList_${f.id}" class="bids-container" style="display:grid; gap:12px;">
                     <div style="color:var(--text-muted); font-size:0.9rem;">Loading bids...</div>
                 </div>
@@ -1010,13 +1026,15 @@ async function selectContractFile(id) {
     
     try {
         const contracts = await api(`/api/files/${id}/contracts`);
-        renderContractDetail(file, contracts || []);
+        const bids = await api(`/api/bids?file_id=${id}`);
+        const winningBid = bids.find(b => b.is_winner);
+        renderContractDetail(file, contracts || [], winningBid);
     } catch (err) {
         showToast(err.message, 'error');
     }
 }
 
-function renderContractDetail(file, contracts) {
+function renderContractDetail(file, contracts, winningBid) {
     const panel = $('#contractDetailPanel');
     const isLeader = currentUser.role === 'team_leader';
     
@@ -1070,6 +1088,22 @@ function renderContractDetail(file, contracts) {
                     </svg>
                     Create New Contract
                 </h4>
+                ${winningBid ? `
+                <div style="padding: 12px; background: rgba(16, 185, 129, 0.1); border-left: 4px solid #10b981; margin-bottom: 16px; border-radius: 4px;">
+                    <strong style="color: #10b981; display: block; margin-bottom: 4px;">Winning Bid Selected</strong>
+                    <p style="margin: 0; font-size: 0.9rem; color: var(--text-secondary);">
+                        Contractor: <strong>${escHtml(winningBid.vendor_name || winningBid.vendor_name_free || 'Unknown')}</strong> 
+                        (Amount: $${parseFloat(winningBid.bid_amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})})
+                    </p>
+                </div>
+                ` : `
+                <div style="padding: 12px; background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; margin-bottom: 16px; border-radius: 4px;">
+                    <strong style="color: #f59e0b; display: block; margin-bottom: 4px;">No Winning Bid</strong>
+                    <p style="margin: 0; font-size: 0.9rem; color: var(--text-secondary);">
+                        Warning: There is no winning bid recorded for this procurement file yet.
+                    </p>
+                </div>
+                `}
                 <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
                     <div style="grid-column: 1 / -1;">
                         <label>Contract Number</label>
@@ -1096,7 +1130,7 @@ function renderContractDetail(file, contracts) {
                     </div>
                     <div style="grid-column: 1 / -1;">
                         <label>Contractor name</label>
-                        <input type="text" id="newContractContractor" class="text-input" placeholder="e.g. Acme Corp">
+                        <input type="text" id="newContractContractor" class="text-input" placeholder="e.g. Acme Corp" value="${winningBid ? escHtml(winningBid.vendor_name || winningBid.vendor_name_free || '') : ''}">
                     </div>
                 </div>
                 <div style="display: flex; gap: 12px; justify-content: flex-end;">
@@ -3353,12 +3387,57 @@ if ($('#inputBidDisqualified')) {
     });
 }
 
+function applyBidModalBasisOfSelection(file) {
+    const techGroup = $('#bidTechScoreGroup');
+    const finGroup = $('#bidFinScoreGroup');
+    const techInput = $('#inputBidTechScore');
+    const techHint = $('#hintBidTechScore');
+    const bos = file.basis_of_selection;
+
+    let showTech = false;
+    let reqTech = false;
+    let maxTech = 100;
+
+    if (bos === 'highest_combined_rating' || bos === 'lowest_price_per_point') {
+        showTech = true;
+        reqTech = true;
+        maxTech = file.maximum_technical_points || 100;
+    } else if (bos === 'lowest_price') {
+        if (file.minimum_points_threshold != null && parseFloat(file.minimum_points_threshold) > 0) {
+            showTech = true;
+            reqTech = true;
+            maxTech = file.maximum_technical_points || 100;
+        }
+    } else {
+        // Fallback for unconfigured files
+        showTech = true;
+    }
+
+    if (techGroup) techGroup.style.display = showTech ? 'block' : 'none';
+    if (techInput) {
+        techInput.required = reqTech;
+        techInput.max = maxTech;
+    }
+    if (techHint) techHint.textContent = `(0–${maxTech})`;
+
+    // Financial score is derived automatically in our new endpoints when BoS is set
+    if (finGroup) finGroup.style.display = bos ? 'none' : 'block';
+}
+
 window.openAddBid = async function(fileId) {
     $('#formBid').reset();
     $('#editBidId').value = '';
     $('#bidFileId').value = fileId;
     $('#modalBidTitle').textContent = 'Add Bid';
     $('#disqualReasonGroup').style.display = 'none';
+    
+    // Apply Basis of Selection logic
+    try {
+        const file = await api(`/api/files/${fileId}`);
+        applyBidModalBasisOfSelection(file);
+    } catch (err) {
+        console.error('Failed to load file for bid modal', err);
+    }
     
     // Populate vendor dropdown
     try {
@@ -3378,6 +3457,14 @@ window.editBid = async function(b) {
     $('#editBidId').value = b.id;
     $('#bidFileId').value = b.file_id;
     $('#modalBidTitle').textContent = 'Edit Bid';
+    
+    // Apply Basis of Selection logic
+    try {
+        const file = await api(`/api/files/${b.file_id}`);
+        applyBidModalBasisOfSelection(file);
+    } catch (err) {
+        console.error('Failed to load file for bid modal', err);
+    }
     
     try {
         const vendors = await api('/api/vendors');
@@ -3459,6 +3546,162 @@ window.deleteBid = async function(bidId, fileId) {
         renderBidsForFile(fileId, true);
     } catch (err) {
         showToast(err.message, 'error');
+    }
+};
+
+// ========================================
+// BASIS OF SELECTION & EVALUATION
+// ========================================
+
+window.openBasisOfSelection = async function(fileId) {
+    try {
+        const file = await api(`/api/files/${fileId}`);
+        $('#bosFileId').value = fileId;
+        
+        const methodSel = $('#inputBosMethod');
+        methodSel.value = file.basis_of_selection || '';
+        
+        $('#inputBosMinimumPoints').value = file.minimum_points_threshold || '';
+        $('#inputBosMaxPoints').value = file.maximum_technical_points || '';
+        $('#inputBosTechWeight').value = file.technical_weight_percent || '';
+        $('#inputBosPriceWeight').value = file.price_weight_percent || '';
+        
+        // trigger change event to show/hide fields
+        methodSel.dispatchEvent(new Event('change'));
+        
+        openModal('modalBasisOfSelection');
+    } catch (err) {
+        showToast('Failed to load file details: ' + err.message, 'error');
+    }
+};
+
+if ($('#inputBosMethod')) {
+    $('#inputBosMethod').addEventListener('change', (e) => {
+        const val = e.target.value;
+        const weightsGroup = $('#bosWeightsGroup');
+        const maxPointsGroup = $('#bosMaxPointsGroup');
+        
+        if (val === 'highest_combined_rating') {
+            weightsGroup.style.display = 'grid';
+            maxPointsGroup.style.display = 'block';
+            $('#inputBosMaxPoints').required = true;
+            $('#inputBosTechWeight').required = true;
+            $('#inputBosPriceWeight').required = true;
+        } else if (val === 'lowest_price_per_point') {
+            weightsGroup.style.display = 'none';
+            maxPointsGroup.style.display = 'none';
+            $('#inputBosMaxPoints').required = false;
+            $('#inputBosTechWeight').required = false;
+            $('#inputBosPriceWeight').required = false;
+        } else {
+            // lowest_price or empty
+            weightsGroup.style.display = 'none';
+            maxPointsGroup.style.display = 'none';
+            $('#inputBosMaxPoints').required = false;
+            $('#inputBosTechWeight').required = false;
+            $('#inputBosPriceWeight').required = false;
+        }
+    });
+}
+
+if ($('#formBasisOfSelection')) {
+    $('#formBasisOfSelection').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fileId = $('#bosFileId').value;
+        
+        const payload = {
+            basis_of_selection: $('#inputBosMethod').value || null,
+            minimum_points_threshold: $('#inputBosMinimumPoints').value || null,
+            maximum_technical_points: $('#inputBosMaxPoints').value || null,
+            technical_weight_percent: $('#inputBosTechWeight').value || null,
+            price_weight_percent: $('#inputBosPriceWeight').value || null
+        };
+        
+        try {
+            await api(`/api/files/${fileId}/basis-of-selection`, {
+                method: 'PUT',
+                body: JSON.stringify(payload)
+            });
+            showToast('Basis of Selection saved successfully');
+            closeModal();
+            viewFileDetail(fileId); // Reload UI
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.evaluateBids = async function(fileId) {
+    const container = $(`#evaluationResults_${fileId}`);
+    if (!container) return;
+    
+    container.style.display = 'block';
+    container.innerHTML = '<div style="color:var(--text-muted);">Evaluating bids...</div>';
+    
+    try {
+        const res = await api(`/api/bids/evaluate/${fileId}`);
+        
+        if (!res.recommended_winner) {
+            container.innerHTML = `
+                <div style="color:var(--warning);">
+                    <strong style="display:block; margin-bottom:4px;">Evaluation Incomplete</strong>
+                    ${res.all_bids && res.all_bids.length > 0 ? "No responsive bids could be evaluated based on the current criteria." : "There are no responsive bids to evaluate."}
+                </div>`;
+            return;
+        }
+        
+        const win = res.recommended_winner;
+        const vendorDisp = win.vendor_name ? escapeHtml(win.vendor_name) : (escapeHtml(win.vendor_name_free) || 'Unknown');
+        
+        let specificsHtml = '';
+        if (res.method === 'highest_combined_rating') {
+            specificsHtml = `
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Combined Score</span><br><strong style="color:var(--text-primary);">${win.combined_rating ? win.combined_rating.toFixed(2) : '0.00'} / 100</strong></div>
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Tech Score</span><br><span style="color:var(--text-primary);">${win.technical_score} / ${res.config.maximum_technical_points}</span> <span style="font-size:0.85rem;">(${win.tech_merit_score ? win.tech_merit_score.toFixed(2) : '0.00'}%)</span></div>
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Price Score</span><br><span style="color:var(--text-primary);">$${parseFloat(win.bid_amount).toLocaleString()}</span> <span style="font-size:0.85rem;">(${win.pricing_score ? win.pricing_score.toFixed(2) : '0.00'}%)</span></div>
+            `;
+        } else if (res.method === 'lowest_price_per_point') {
+            specificsHtml = `
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Price per Point</span><br><strong style="color:var(--text-primary);">$${win.metric ? win.metric.toLocaleString() : '0.00'}/pt</strong></div>
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Tech Score</span><br><span style="color:var(--text-primary);">${win.technical_score}</span></div>
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Amount</span><br><span style="color:var(--text-primary);">$${parseFloat(win.bid_amount).toLocaleString()}</span></div>
+            `;
+        } else {
+            // lowest_price
+            specificsHtml = `
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Evaluated Amount</span><br><strong style="color:var(--text-primary);">$${parseFloat(win.bid_amount).toLocaleString()}</strong></div>
+            `;
+        }
+        
+        let autoWinHtml = '';
+        if (!win.is_winner && !res.tied && currentUser.role === 'team_leader') {
+            try {
+                await api(`/api/bids/${win.id}/winner`, { method: 'PUT', body: '{}' });
+                win.is_winner = true;
+                autoWinHtml = `<div style="color:#10b981; font-size:0.85rem; margin-top:8px; font-weight:600;">★ Automatically marked as winner</div>`;
+                renderBidsForFile(fileId, true);
+            } catch (err) {
+                console.error("Auto mark winner failed:", err);
+            }
+        }
+
+        container.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                    <strong style="color:var(--text-primary); font-size:1.1rem;">Recommended Winner: <span style="color:var(--accent);">${vendorDisp}</span></strong>
+                    <div style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">Based on <span style="text-transform:capitalize;">${(res.method || '').replace(/_/g, ' ')}</span></div>
+                    ${autoWinHtml}
+                </div>
+                ${!win.is_winner && currentUser.role === 'team_leader' ? `<button class="btn btn-sm btn-primary" onclick="markBidWinner(${win.id}, ${fileId})">Set as Winner</button>` : ''}
+            </div>
+            <div style="display:flex; gap:24px; margin-top:16px;">
+                ${specificsHtml}
+            </div>
+            ${res.tied ? `<div style="margin-top:12px; color:var(--warning); font-size:0.85rem;"><strong>Note:</strong> Multiple bids had the same evaluation result. Manual selection may be required.</div>` : ''}
+        `;
+        
+    } catch (err) {
+        container.innerHTML = `<div style="color:var(--danger);">Error evaluating bids: ${escapeHtml(err.message)}</div>`;
     }
 };
 
