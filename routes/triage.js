@@ -91,7 +91,7 @@ router.get('/stats', async (req, res) => {
 });
 
 // GET /api/triage/:id — detail with missing docs
-router.get('/:id', async (req, res) => {
+router.get('/:id(\\d+)', async (req, res) => {
     try {
         const tf = await pool.query(`
             SELECT tf.*, t.name AS team_name, u.display_name AS created_by_name,

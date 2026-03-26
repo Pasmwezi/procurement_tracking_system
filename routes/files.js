@@ -192,7 +192,7 @@ router.get('/stats/summary', async (req, res) => {
 });
 
 // GET /api/files/:id — file detail with step history
-router.get('/:id', async (req, res) => {
+router.get('/:id(\\d+)', async (req, res) => {
     try {
         const fileResult = await pool.query(`
       SELECT f.*, u.display_name AS officer_name, u.email AS officer_email,

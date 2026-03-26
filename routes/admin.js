@@ -28,8 +28,8 @@ router.post('/users', async (req, res) => {
     if (!email || !display_name || !role) {
         return res.status(400).json({ error: 'Email, name, and role are required' });
     }
-    if (!['team_leader', 'officer'].includes(role)) {
-        return res.status(400).json({ error: 'Role must be team_leader or officer' });
+    if (!['team_leader', 'officer', 'admin'].includes(role)) {
+        return res.status(400).json({ error: 'Role must be team_leader, officer, or admin' });
     }
 
     try {
@@ -58,6 +58,10 @@ router.put('/users/:id', async (req, res) => {
     // Prevent editing own admin account's role
     if (userId === req.user.id && role && role !== 'admin') {
         return res.status(400).json({ error: 'Cannot change your own role' });
+    }
+
+    if (role && !['team_leader', 'officer', 'admin'].includes(role)) {
+        return res.status(400).json({ error: 'Role must be team_leader, officer, or admin' });
     }
 
     try {
