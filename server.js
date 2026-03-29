@@ -3,7 +3,6 @@ const cors = require('cors');
 const cron = require('node-cron');
 const path = require('path');
 const cookieParser = require('cookie-parser');
-const rateLimit = require('express-rate-limit');
 
 const pool = require('./db/pool');
 const { requireAuth, requireRole } = require('./middleware/auth');
@@ -33,14 +32,8 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // 5 requests per windowMs
-    message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
-});
-
 // Public routes (no auth required)
-app.use('/api/auth', authLimiter, authRouter);
+app.use('/api/auth', authRouter);
 
 // Health check (public)
 app.get('/api/health', async (req, res) => {
@@ -103,7 +96,7 @@ async function start() {
             await pool.query('SELECT 1');
             console.log('✅ Database connected');
             break;
-        } catch (err) {
+        } catch (_err) {
             retries--;
             console.log(`⏳ Waiting for database... (${retries} retries left)`);
             await new Promise(r => setTimeout(r, 3000));
@@ -302,19 +295,20 @@ async function start() {
             "SELECT id, password_hash FROM users WHERE email = $1 AND role = 'admin'",
             ['admin@filetracker.local']
         );
+        const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
         if (existing.rows.length === 0) {
-            const hash = await bcrypt.hash('admin123', 10);
+            const hash = await bcrypt.hash(defaultPassword, 10);
             await pool.query(
                 "INSERT INTO users (email, password_hash, display_name, role) VALUES ($1, $2, $3, 'admin')",
                 ['admin@filetracker.local', hash, 'App Administrator']
             );
-            console.log('✅ Default admin created (admin@filetracker.local / admin123)');
+            console.log('✅ Default admin created (admin@filetracker.local)');
         } else {
             // Verify hash is valid bcrypt, re-hash if not
             const row = existing.rows[0];
             const isValid = row.password_hash && row.password_hash.startsWith('$2');
             if (!isValid) {
-                const hash = await bcrypt.hash('admin123', 10);
+                const hash = await bcrypt.hash(defaultPassword, 10);
                 await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, row.id]);
                 console.log('✅ Admin password hash refreshed');
             } else {
@@ -324,6 +318,14 @@ async function start() {
     } catch (err) {
         console.error('⚠️ Admin seed warning:', err.message);
     }
+
+    // Global error handler — must be defined after all routes
+     
+    app.use((err, req, res, next) => {
+        console.error('[Unhandled Error]', err.message);
+        const status = err.status || err.statusCode || 500;
+        res.status(status).json({ error: err.message || 'Internal server error' });
+    });
 
     app.listen(PORT, () => {
         console.log(`🚀 Server running on http://localhost:${PORT}`);

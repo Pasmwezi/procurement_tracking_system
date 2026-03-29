@@ -19,7 +19,7 @@ router.get('/', [
         const limit = req.query.limit || 50;
         const offset = (page - 1) * limit;
 
-        let baseQuery = `
+        const baseQuery = `
       FROM files f
       JOIN users u ON u.id = f.officer_id
       LEFT JOIN teams t ON t.id = u.team_id
@@ -58,7 +58,7 @@ router.get('/', [
             conditions.push(`f.process_name = $${params.length}`);
         }
 
-        let whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+        const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
         // Get total count
         const countRes = await pool.query(`SELECT COUNT(*) ${baseQuery} ${whereClause}`, params);
@@ -641,7 +641,7 @@ router.get('/export', async (req, res) => {
             'Officer':              f.officer_name,
             'Current Step':         f.current_step_name || '',
             'Status':               f.status,
-            'Estimated Value':      f.estimated_value != null ? parseFloat(f.estimated_value) : '',
+            'Estimated Value':      f.estimated_value !== null && f.estimated_value !== undefined ? parseFloat(f.estimated_value) : '',
             'Cancellation Reason':  f.cancellation_reason || '',
             'Notes':                f.notes || '',
             'Date Assigned':        f.created_at ? new Date(f.created_at).toISOString().split('T')[0] : '',
@@ -915,7 +915,7 @@ router.put('/contracts/:contractId/amend', async (req, res) => {
 
     try {
         let query = 'UPDATE contracts SET amended_end_date = $1';
-        let params = [amended_end_date];
+        const params = [amended_end_date];
         
         if (exercise_option) {
             query += ', number_of_options = GREATEST(0, COALESCE(number_of_options, 0) - 1)';
@@ -953,21 +953,21 @@ router.put('/:id/basis-of-selection', async (req, res) => {
 
     // Validate weights for highest_combined_rating
     if (basis_of_selection === 'highest_combined_rating') {
-        if (technical_weight_percent == null || price_weight_percent == null) {
+        if (technical_weight_percent === null || technical_weight_percent === undefined || price_weight_percent === null || price_weight_percent === undefined) {
             return res.status(400).json({ error: 'technical_weight_percent and price_weight_percent are required for highest_combined_rating' });
         }
         const sum = parseFloat(technical_weight_percent) + parseFloat(price_weight_percent);
         if (Math.abs(sum - 100) > 0.01) {
             return res.status(400).json({ error: 'technical_weight_percent and price_weight_percent must sum to 100' });
         }
-        if (maximum_technical_points == null || parseFloat(maximum_technical_points) <= 0) {
+        if (maximum_technical_points === null || maximum_technical_points === undefined || parseFloat(maximum_technical_points) <= 0) {
             return res.status(400).json({ error: 'maximum_technical_points is required and must be > 0 for highest_combined_rating' });
         }
     }
 
     // Validate threshold requirement for point-based methods
     if (['lowest_price_per_point', 'highest_combined_rating'].includes(basis_of_selection)) {
-        if (minimum_points_threshold == null) {
+        if (minimum_points_threshold === null || minimum_points_threshold === undefined) {
             return res.status(400).json({ error: 'minimum_points_threshold is required for point-based selection methods' });
         }
     }
@@ -985,10 +985,10 @@ router.put('/:id/basis-of-selection', async (req, res) => {
                        technical_weight_percent, price_weight_percent, maximum_technical_points`,
             [
                 basis_of_selection || null,
-                minimum_points_threshold != null ? parseFloat(minimum_points_threshold) : null,
-                technical_weight_percent != null ? parseFloat(technical_weight_percent) : null,
-                price_weight_percent != null ? parseFloat(price_weight_percent) : null,
-                maximum_technical_points != null ? parseFloat(maximum_technical_points) : null,
+                minimum_points_threshold !== null && minimum_points_threshold !== undefined ? parseFloat(minimum_points_threshold) : null,
+                technical_weight_percent !== null && technical_weight_percent !== undefined ? parseFloat(technical_weight_percent) : null,
+                price_weight_percent !== null && price_weight_percent !== undefined ? parseFloat(price_weight_percent) : null,
+                maximum_technical_points !== null && maximum_technical_points !== undefined ? parseFloat(maximum_technical_points) : null,
                 req.params.id
             ]
         );

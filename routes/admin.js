@@ -81,7 +81,7 @@ router.put('/users/:id', [
         if (role !== undefined) { fields.push(`role = $${idx++}`); values.push(role); }
         if (team_id !== undefined) { fields.push(`team_id = $${idx++}`); values.push(team_id || null); }
         if (is_active !== undefined) { fields.push(`is_active = $${idx++}`); values.push(is_active); }
-        fields.push(`updated_at = NOW()`);
+        fields.push('updated_at = NOW()');
 
         if (fields.length <= 1) return res.status(400).json({ error: 'No fields to update' });
 
@@ -434,7 +434,7 @@ router.post('/email-settings/test', [
         try {
             const userRow = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
             toAddress = userRow.rows.length > 0 ? userRow.rows[0].email : null;
-        } catch (e) { /* ignore */ }
+        } catch (_e) { /* ignore */ }
     }
     if (!toAddress) return res.status(400).json({ error: 'No email address provided' });
 

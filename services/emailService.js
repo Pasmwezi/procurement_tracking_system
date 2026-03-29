@@ -19,7 +19,7 @@ const SMTP_KEYS = [
 async function getSmtpSettings() {
     try {
         const result = await pool.query(
-            `SELECT key, value FROM app_settings WHERE key = ANY($1)`,
+            'SELECT key, value FROM app_settings WHERE key = ANY($1)',
             [SMTP_KEYS]
         );
         if (result.rows.length === 0) return null;

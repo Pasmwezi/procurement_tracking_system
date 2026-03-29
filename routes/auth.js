@@ -3,11 +3,18 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
+const rateLimit = require('express-rate-limit');
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 requests per windowMs
+    message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
+});
 
 const JWT_SECRET = process.env.JWT_SECRET || 'file-tracker-secret-key-change-in-production';
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
@@ -212,7 +219,7 @@ router.get('/setup-status', async (req, res) => {
         );
         const changed = result.rows.length > 0 ? result.rows[0].password_changed : true;
         res.json({ admin_password_changed: !!changed });
-    } catch (err) {
+    } catch (_err) {
         res.json({ admin_password_changed: true }); // fail safe — hide hint on error
     }
 });

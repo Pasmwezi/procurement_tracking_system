@@ -41,7 +41,7 @@ router.get('/', [
         const limit = req.query.limit || 50;
         const offset = (page - 1) * limit;
 
-        let baseQuery = `
+        const baseQuery = `
             FROM triage_files tf
             LEFT JOIN teams t ON t.id = tf.team_id
             LEFT JOIN users u ON u.id = tf.created_by
@@ -61,7 +61,7 @@ router.get('/', [
             conditions.push(`tf.status = $${params.length}`);
         }
 
-        let whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+        const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
         // Get total count
         const countRes = await pool.query(`SELECT COUNT(*) ${baseQuery} ${whereClause}`, params);
@@ -333,7 +333,7 @@ router.put('/:id/missing-docs/:docId', async (req, res) => {
         const allProvided = allDocs.rows.length > 0 && allDocs.rows.every(d => d.provided);
         if (allProvided) {
             await pool.query(
-                `UPDATE triage_files SET status = 'Triaged', updated_at = NOW() WHERE id = $1`,
+                'UPDATE triage_files SET status = \'Triaged\', updated_at = NOW() WHERE id = $1',
                 [req.params.id]
             );
             await logStatusChange(pool, req.params.id, 'Missing Document(s)', 'Triaged', req.user.id, 'All documents provided');
@@ -363,7 +363,7 @@ router.delete('/:id/missing-docs/:docId', async (req, res) => {
             const cur = await pool.query('SELECT status FROM triage_files WHERE id = $1', [req.params.id]);
             if (cur.rows[0]?.status === 'Missing Document(s)') {
                 await pool.query(
-                    `UPDATE triage_files SET status = 'Triaged', updated_at = NOW() WHERE id = $1`,
+                    'UPDATE triage_files SET status = \'Triaged\', updated_at = NOW() WHERE id = $1',
                     [req.params.id]
                 );
                 await logStatusChange(pool, req.params.id, 'Missing Document(s)', 'Triaged', req.user.id, 'All missing documents removed');
@@ -450,7 +450,7 @@ router.post('/:id/assign', [
 
         // Update triage file status to Assigned and link to file
         await client.query(
-            `UPDATE triage_files SET status = 'Assigned', file_id = $1, updated_at = NOW() WHERE id = $2`,
+            'UPDATE triage_files SET status = \'Assigned\', file_id = $1, updated_at = NOW() WHERE id = $2',
             [file.id, req.params.id]
         );
 
@@ -523,7 +523,7 @@ router.get('/export', async (req, res) => {
             'Title':                tf.title,
             'Business Owner':       tf.business_owner,
             'Status':               tf.status,
-            'Estimated Value':      tf.estimated_value != null ? parseFloat(tf.estimated_value) : '',
+            'Estimated Value':      tf.estimated_value !== null && tf.estimated_value !== undefined ? parseFloat(tf.estimated_value) : '',
             'Team':                 tf.team_name || '',
             'Created By':           tf.created_by_name || '',
             'Cancellation Reason':  tf.cancellation_reason || '',
@@ -554,7 +554,7 @@ router.post('/import', upload.single('file'), async (req, res) => {
     let workbook;
     try {
         workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
-    } catch (e) {
+    } catch (_e) {
         return res.status(400).json({ error: 'Could not parse Excel file. Ensure it is a valid .xlsx file.' });
     }
 

@@ -288,25 +288,25 @@ router.get('/evaluate/:file_id', async (req, res) => {
         //   - Not disqualified
         //   - For point-based methods: technical_score >= minimum_points_threshold (if set)
         // ---------------------------------------------------------------
-        const minThreshold = cfg.minimum_points_threshold != null ? parseFloat(cfg.minimum_points_threshold) : null;
+        const minThreshold = cfg.minimum_points_threshold !== null && cfg.minimum_points_threshold !== undefined ? parseFloat(cfg.minimum_points_threshold) : null;
 
         const evaluatedBids = allBids.map(b => {
-            const bid_amount = b.bid_amount != null ? parseFloat(b.bid_amount) : null;
-            const technical_score = b.technical_score != null ? parseFloat(b.technical_score) : null;
+            const bid_amount = b.bid_amount !== null ? parseFloat(b.bid_amount) : null;
+            const technical_score = b.technical_score !== null ? parseFloat(b.technical_score) : null;
 
             let responsive = !b.disqualified;
             let non_responsive_reason = b.disqualified ? (b.disqualification_reason || 'Disqualified') : null;
 
             // Point-threshold check for point-based methods
             if (responsive && ['lowest_price_per_point', 'highest_combined_rating'].includes(method)) {
-                if (minThreshold != null && (technical_score == null || technical_score < minThreshold)) {
+                if (minThreshold !== null && (technical_score === null || technical_score < minThreshold)) {
                     responsive = false;
                     non_responsive_reason = `Technical score (${technical_score ?? 'N/A'}) is below minimum threshold (${minThreshold})`;
                 }
             }
 
             // Price must be present for any evaluation
-            if (responsive && bid_amount == null) {
+            if (responsive && bid_amount === null) {
                 responsive = false;
                 non_responsive_reason = 'Missing bid amount';
             }
@@ -349,7 +349,7 @@ router.get('/evaluate/:file_id', async (req, res) => {
         // ---------------------------------------------------------------
         if (method === 'lowest_price_per_point') {
             // Require that ALL responsive bids have a technical_score
-            const missing = responsiveBids.filter(b => b.technical_score == null || b.technical_score === 0);
+            const missing = responsiveBids.filter(b => b.technical_score === null || b.technical_score === 0);
             if (missing.length > 0) {
                 return res.status(400).json({
                     error: 'Cannot evaluate: one or more responsive bids are missing a technical score or have a score of 0 (division by zero). Price per point cannot be calculated.',

@@ -165,8 +165,6 @@ async function showApp(userData) {
     $('#loginScreen').classList.remove('active');
     document.body.classList.add('authenticated');
 
-    console.log('showApp called with user:', currentUser);
-
     // Update user UI
     const initials = currentUser.displayName.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
     const roleLbl = { admin: 'App Admin', team_leader: 'Team Leader', officer: 'Officer' }[currentUser.role] || currentUser.role;
@@ -185,25 +183,19 @@ async function showApp(userData) {
 
     // Navigate to first visible page
     const visibleNavs = [...$$('.nav-item')].filter(el => el.style.display !== 'none');
-    console.log('Visible nav items:', visibleNavs.map(el => el.dataset.page));
-
     if (visibleNavs.length > 0) {
-        console.log('Navigating to first visible page:', visibleNavs[0].dataset.page);
         navigateTo(visibleNavs[0].dataset.page);
     } else {
         console.warn('No visible nav items found for role:', currentUser.role);
     }
 
     // Check forced password change
-    console.log('Password changed?', currentUser.passwordChanged);
     if (currentUser.passwordChanged === false) { // Explicit check
-        console.log('Forcing password change...');
         forcePasswordChange();
     }
 }
 
 function applyRoleVisibility() {
-    console.log('Applying role visibility for:', currentUser.role);
     $$('[data-roles]').forEach(el => {
         const roles = el.dataset.roles.split(' ');
         const isVisible = roles.includes(currentUser.role);
@@ -214,12 +206,9 @@ function applyRoleVisibility() {
 
 // ===== Login Form =====
 const loginForm = $('#formLogin');
-console.log('Login form found:', loginForm);
-
 if (loginForm) {
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        console.log('Login submitted');
         const email = $('#loginEmail').value.trim();
         const password = $('#loginPassword').value;
         const errDiv = $('#loginError');
@@ -236,7 +225,6 @@ if (loginForm) {
         btn.textContent = 'Signing in...';
 
         try {
-            console.log('Sending login request for:', email);
             const res = await fetch(API + '/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -244,8 +232,6 @@ if (loginForm) {
             });
 
             const data = await res.json();
-            console.log('Login response:', res.status, data);
-
             if (!res.ok) {
                 errDiv.textContent = data.error || 'Login failed';
                 errDiv.style.display = 'block';
@@ -256,8 +242,6 @@ if (loginForm) {
 
             token = data.token;
             localStorage.setItem('token', token);
-            console.log('Login successful, calling showApp');
-
             // IMPORTANT: await showApp so errors are caught by catch block
             try {
                 await showApp(data.user);
@@ -340,14 +324,10 @@ $$('.nav-item').forEach(item => {
 
 // ===== Modal =====
 function openModal(id) {
-    console.log('openModal called for:', id);
-    const els = $$('.modal');
-    console.log(`Found ${els.length} modals to hide`);
-    els.forEach(m => m.style.display = 'none');
+    $$('.modal').forEach(m => m.style.display = 'none');
 
     const target = $(`#${id}`);
     if (target) {
-        console.log('Showing target modal:', id);
         target.style.display = 'block';
     } else {
         console.error('Target modal not found:', id);
@@ -355,7 +335,6 @@ function openModal(id) {
         return;
     }
 
-    console.log('Activating overlay');
     const overlay = $('#modalOverlay');
     if (overlay) {
         overlay.classList.add('active');
@@ -2777,10 +2756,8 @@ $('#formChangePassword').addEventListener('submit', async (e) => {
 
 // ===== Force Password Change =====
 function forcePasswordChange() {
-    console.log('forcePasswordChange called');
     const modalId = 'modalChangePassword';
     const modal = $('#' + modalId);
-    console.log('Modal element:', modal);
 
     if (!modal) {
         console.error('CRITICAL: modalChangePassword not found in DOM');
@@ -2789,9 +2766,7 @@ function forcePasswordChange() {
     }
 
     try {
-        console.log('Opening modal via openModal...');
         openModal(modalId);
-        console.log('Modal opened (style.display set to block)');
 
         const headerClose = modal.querySelector('.btn-close');
         if (headerClose) headerClose.style.display = 'none';
@@ -2801,7 +2776,6 @@ function forcePasswordChange() {
 
         let msg = modal.querySelector('.force-msg');
         if (!msg) {
-            console.log('Creating force-msg');
             msg = document.createElement('div');
             msg.className = 'force-msg';
             msg.style.cssText = 'background: var(--warning-bg, #fff3cd); color: var(--warning-text, #856404); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9rem;';
@@ -2810,9 +2784,7 @@ function forcePasswordChange() {
             if (form) form.insertBefore(msg, form.firstChild);
         }
 
-        console.log('Adding locked class to overlay');
         $('#modalOverlay').classList.add('locked');
-        console.log('forcePasswordChange complete');
     } catch (e) {
         console.error('forcePasswordChange crashed:', e);
         alert('Error in forcePasswordChange: ' + e.message);

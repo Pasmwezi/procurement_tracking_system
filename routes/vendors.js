@@ -9,7 +9,7 @@ router.get('/', async (req, res) => {
         let where = '';
         if (req.query.status) {
             params.push(req.query.status);
-            where = `WHERE status = $1`;
+            where = 'WHERE status = $1';
         }
         const result = await pool.query(
             `SELECT * FROM vendors ${where} ORDER BY name ASC`,

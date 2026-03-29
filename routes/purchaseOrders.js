@@ -49,7 +49,7 @@ router.post('/', async (req, res) => {
         // Verify the contract belongs to a file this user can access
         if (req.user.role === 'officer') {
             const check = await pool.query(
-                `SELECT f.officer_id FROM contracts c JOIN files f ON f.id = c.file_id WHERE c.id = $1`,
+                'SELECT f.officer_id FROM contracts c JOIN files f ON f.id = c.file_id WHERE c.id = $1',
                 [contract_id]
             );
             if (check.rows.length === 0 || check.rows[0].officer_id !== req.user.id) {
