@@ -30,7 +30,7 @@ services:
     image: pasmwezi/procurement_tracking_system:latest
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "8080:3000"
     environment:
       DATABASE_URL: postgres://tracker:tracker_pass@db:5432/file_tracking
       NODE_ENV: production

@@ -227,6 +227,43 @@ async function sendAssignmentEmail(officerEmail, officerName, prNumber, title, p
     }
 }
 
+/**
+ * Send a contract expiry email.
+ */
+async function sendContractExpiryEmail(leaderEmail, leaderName, prNumber, fileTitle, contractNumber, contractorName, endDate, daysLeft) {
+    const html = `
+        <div style="font-family: 'Inter', Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px; background: #1e1e2d; border-radius: 12px; color: #ffffff;">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <div style="display: inline-block; width: 48px; height: 48px; background: rgba(255, 199, 0, 0.15); border-radius: 12px; line-height: 48px; font-size: 24px; color: #ffc700;">⏳</div>
+            </div>
+            <h2 style="text-align: center; color: #ffc700; margin-bottom: 8px;">Contract Expiring Soon</h2>
+            <p style="color: #a1a5b7; font-size: 0.9rem; text-align: center; margin-bottom: 24px;">
+                Hi <strong style="color: #ffffff;">${leaderName}</strong>, a contract is expiring in ${daysLeft} days.
+            </p>
+            <div style="background: rgba(0, 0, 0, 0.2); border: 1px solid #2b2b40; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                <table style="width: 100%; border-collapse: collapse; color: #ffffff;">
+                    <tr><td style="padding: 6px 0; color: #6e7287; font-size: 0.8rem;">PR NUMBER</td><td style="padding: 6px 0; font-weight: 600;">${prNumber}</td></tr>
+                    <tr><td style="padding: 6px 0; color: #6e7287; font-size: 0.8rem;">FILE TITLE</td><td style="padding: 6px 0; font-weight: 600;">${fileTitle}</td></tr>
+                    <tr><td style="padding: 6px 0; color: #6e7287; font-size: 0.8rem;">CONTRACT NO.</td><td style="padding: 6px 0; font-weight: 600;">${contractNumber || 'N/A'}</td></tr>
+                    <tr><td style="padding: 6px 0; color: #6e7287; font-size: 0.8rem;">CONTRACTOR</td><td style="padding: 6px 0; font-weight: 600;">${contractorName || 'N/A'}</td></tr>
+                    <tr><td style="padding: 6px 0; color: #6e7287; font-size: 0.8rem;">END DATE</td><td style="padding: 6px 0; font-weight: 700; color: #ffc700;">${new Date(endDate).toLocaleDateString()}</td></tr>
+                </table>
+            </div>
+            <p style="color: #a1a5b7; font-size: 0.82rem; text-align: center;">
+                Please review this contract and prepare any necessary amendments or renewals.
+            </p>
+            <hr style="border: none; border-top: 1px solid #2b2b40; margin: 24px 0;">
+            <p style="text-align: center; color: #6e7287; font-size: 0.75rem;">FileTracker — Procurement File Tracking System</p>
+        </div>
+    `;
+
+    try {
+        await sendEmail(leaderEmail, `⏳ Contract Expiring in ${daysLeft} days: ${prNumber}`, html);
+    } catch (err) {
+        console.error(`[Email] Expiry email failed for ${leaderEmail}:`, err.message);
+    }
+}
+
 module.exports = {
     getSmtpSettings,
     saveSmtpSettings,
@@ -234,5 +271,6 @@ module.exports = {
     sendTestEmail,
     sendOverdueEmail,
     sendAssignmentEmail,
+    sendContractExpiryEmail,
     SMTP_KEYS
 };

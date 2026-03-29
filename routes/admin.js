@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const pool = require('../db/pool');
+const { body, param, query } = require('express-validator');
+const { validateRequest } = require('../middleware/validate');
 
 // GET /api/admin/users — list all users with team info
 router.get('/users', async (req, res) => {
@@ -23,14 +25,15 @@ router.get('/users', async (req, res) => {
 });
 
 // POST /api/admin/users — create a user
-router.post('/users', async (req, res) => {
+router.post('/users', [
+    body('email').isEmail().withMessage('Valid email required'),
+    body('display_name').notEmpty().withMessage('Display name required'),
+    body('role').isIn(['team_leader', 'officer', 'admin']).withMessage('Role must be team_leader, officer, or admin'),
+    body('team_id').optional({ nullable: true }).isInt().withMessage('Team ID must be integer'),
+    body('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+    validateRequest
+], async (req, res) => {
     const { email, display_name, role, team_id, password } = req.body;
-    if (!email || !display_name || !role) {
-        return res.status(400).json({ error: 'Email, name, and role are required' });
-    }
-    if (!['team_leader', 'officer', 'admin'].includes(role)) {
-        return res.status(400).json({ error: 'Role must be team_leader, officer, or admin' });
-    }
 
     try {
         let passwordHash = null;
@@ -51,17 +54,21 @@ router.post('/users', async (req, res) => {
 });
 
 // PUT /api/admin/users/:id — update user profile
-router.put('/users/:id', async (req, res) => {
+router.put('/users/:id', [
+    param('id').isInt().withMessage('User ID must be an integer'),
+    body('email').optional().isEmail().withMessage('Valid email required'),
+    body('display_name').optional().notEmpty().withMessage('Display name cannot be empty'),
+    body('role').optional().isIn(['team_leader', 'officer', 'admin']).withMessage('Invalid role'),
+    body('team_id').optional({ nullable: true }).isInt().withMessage('Team ID must be integer'),
+    body('is_active').optional().isBoolean().withMessage('is_active must be boolean'),
+    validateRequest
+], async (req, res) => {
     const { email, display_name, role, team_id, is_active } = req.body;
     const userId = parseInt(req.params.id);
 
     // Prevent editing own admin account's role
     if (userId === req.user.id && role && role !== 'admin') {
         return res.status(400).json({ error: 'Cannot change your own role' });
-    }
-
-    if (role && !['team_leader', 'officer', 'admin'].includes(role)) {
-        return res.status(400).json({ error: 'Role must be team_leader, officer, or admin' });
     }
 
     try {
@@ -92,11 +99,12 @@ router.put('/users/:id', async (req, res) => {
 });
 
 // PUT /api/admin/users/:id/reset-password — set a new password for a user
-router.put('/users/:id/reset-password', async (req, res) => {
+router.put('/users/:id/reset-password', [
+    param('id').isInt().withMessage('User ID must be an integer'),
+    body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+    validateRequest
+], async (req, res) => {
     const { password } = req.body;
-    if (!password || password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    }
 
     try {
         const hash = await bcrypt.hash(password, 10);
@@ -112,7 +120,10 @@ router.put('/users/:id/reset-password', async (req, res) => {
 });
 
 // DELETE /api/admin/users/:id — deactivate user (soft delete)
-router.delete('/users/:id', async (req, res) => {
+router.delete('/users/:id', [
+    param('id').isInt().withMessage('User ID must be an integer'),
+    validateRequest
+], async (req, res) => {
     const userId = parseInt(req.params.id);
     if (userId === req.user.id) {
         return res.status(400).json({ error: 'Cannot deactivate your own account' });
@@ -159,9 +170,11 @@ router.get('/teams', async (req, res) => {
 });
 
 // POST /api/admin/teams — create team
-router.post('/teams', async (req, res) => {
+router.post('/teams', [
+    body('name').trim().notEmpty().withMessage('Team name is required'),
+    validateRequest
+], async (req, res) => {
     const { name } = req.body;
-    if (!name) return res.status(400).json({ error: 'Team name is required' });
 
     try {
         const result = await pool.query(
@@ -176,9 +189,12 @@ router.post('/teams', async (req, res) => {
 });
 
 // PUT /api/admin/teams/:id — rename team
-router.put('/teams/:id', async (req, res) => {
+router.put('/teams/:id', [
+    param('id').isInt().withMessage('Team ID must be an integer'),
+    body('name').trim().notEmpty().withMessage('Team name is required'),
+    validateRequest
+], async (req, res) => {
     const { name } = req.body;
-    if (!name) return res.status(400).json({ error: 'Team name is required' });
 
     try {
         const result = await pool.query(
@@ -194,7 +210,10 @@ router.put('/teams/:id', async (req, res) => {
 });
 
 // DELETE /api/admin/teams/:id — delete team (only if no members)
-router.delete('/teams/:id', async (req, res) => {
+router.delete('/teams/:id', [
+    param('id').isInt().withMessage('Team ID must be an integer'),
+    validateRequest
+], async (req, res) => {
     try {
         const membersCheck = await pool.query(
             'SELECT COUNT(*) FROM users WHERE team_id = $1 AND is_active = TRUE',
@@ -233,9 +252,11 @@ router.get('/processes', async (req, res) => {
 });
 
 // POST /api/admin/processes — create a new process
-router.post('/processes', async (req, res) => {
+router.post('/processes', [
+    body('name').trim().notEmpty().withMessage('Process name is required'),
+    validateRequest
+], async (req, res) => {
     const { name } = req.body;
-    if (!name || name.trim() === '') return res.status(400).json({ error: 'Process name is required' });
 
     try {
         const result = await pool.query(
@@ -250,7 +271,10 @@ router.post('/processes', async (req, res) => {
 });
 
 // DELETE /api/admin/processes/:name — delete a process (only if not used by files)
-router.delete('/processes/:name', async (req, res) => {
+router.delete('/processes/:name', [
+    param('name').trim().notEmpty().withMessage('Process name is required'),
+    validateRequest
+], async (req, res) => {
     try {
         const filesCheck = await pool.query(
             'SELECT COUNT(*) FROM files WHERE process_name = $1',
@@ -269,7 +293,10 @@ router.delete('/processes/:name', async (req, res) => {
 });
 
 // GET /api/admin/processes/:name/steps — get process steps
-router.get('/processes/:name/steps', async (req, res) => {
+router.get('/processes/:name/steps', [
+    param('name').trim().notEmpty().withMessage('Process name is required'),
+    validateRequest
+], async (req, res) => {
     try {
         const result = await pool.query(
             'SELECT * FROM process_steps WHERE process_name = $1 ORDER BY step_order',
@@ -282,13 +309,13 @@ router.get('/processes/:name/steps', async (req, res) => {
 });
 
 // PUT /api/admin/processes/:name/steps — bulk update steps
-router.put('/processes/:name/steps', async (req, res) => {
+router.put('/processes/:name/steps', [
+    param('name').trim().notEmpty().withMessage('Process name is required'),
+    body('steps').isArray().withMessage('Steps must be an array'),
+    validateRequest
+], async (req, res) => {
     const processName = req.params.name;
     const { steps } = req.body; // array of { id, step_name, sla_days, step_order }
-
-    if (!Array.isArray(steps)) {
-        return res.status(400).json({ error: 'Steps must be an array' });
-    }
 
     const client = await pool.connect();
     try {
@@ -376,7 +403,10 @@ router.get('/email-settings', async (req, res) => {
 });
 
 // PUT /api/admin/email-settings — save SMTP config
-router.put('/email-settings', async (req, res) => {
+router.put('/email-settings', [
+    body().isObject().withMessage('Settings must be an object'),
+    validateRequest
+], async (req, res) => {
     try {
         const incoming = {};
         for (const key of SMTP_KEYS) {
@@ -394,7 +424,10 @@ router.put('/email-settings', async (req, res) => {
 });
 
 // POST /api/admin/email-settings/test — send a test email
-router.post('/email-settings/test', async (req, res) => {
+router.post('/email-settings/test', [
+    body('to').optional().isEmail().withMessage('Valid email address required'),
+    validateRequest
+], async (req, res) => {
     let toAddress = req.body.to;
     if (!toAddress) {
         // Look up email from DB since JWT doesn't include it
@@ -410,6 +443,48 @@ router.post('/email-settings/test', async (req, res) => {
         res.json({ success: true, message: `Test email sent to ${toAddress}` });
     } catch (err) {
         res.status(500).json({ error: `Failed to send test email: ${err.message}` });
+    }
+});
+
+// GET /api/admin/audit-logs — fetch paginated audit logs
+router.get('/audit-logs', [
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be an integer between 1 and 100'),
+    validateRequest
+], async (req, res) => {
+    // Extra guard (though auth middleware in server.js should ideally protect the route prefix)
+    if (!req.user || req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+
+    try {
+        // Total count
+        const countRes = await pool.query('SELECT COUNT(*) FROM audit_log');
+        const total = parseInt(countRes.rows[0].count, 10);
+
+        // Paginated rows
+        const result = await pool.query(`
+            SELECT a.id, a.action, a.entity_type, a.entity_id, 
+                   a.old_value, a.new_value, a.ip_address, a.created_at,
+                   u.display_name AS user_name, u.email AS user_email
+            FROM audit_log a
+            LEFT JOIN users u ON a.user_id = u.id
+            ORDER BY a.created_at DESC
+            LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+
+        res.json({
+            data: result.rows,
+            total,
+            page,
+            limit
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 

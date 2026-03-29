@@ -36,10 +36,79 @@ function setupTeamToggles() {
 
 function authHeaders() { return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }; }
 
+let isRefreshing = false;
+let refreshSubscribers = [];
+
+function onRefreshed(newToken) {
+    refreshSubscribers.forEach(cb => cb(newToken));
+    refreshSubscribers = [];
+}
+
 async function api(path, options = {}) {
-    const res = await fetch(API + path, { ...options, headers: { ...authHeaders(), ...options.headers } });
-    if (res.status === 401) { logout(); return null; }
-    const data = await res.json();
+    let res = await fetch(API + path, { ...options, headers: { ...authHeaders(), ...options.headers } });
+    
+    if (res.status === 401) { 
+        // If already refreshing, queue the request
+        if (isRefreshing) {
+            return new Promise((resolve, reject) => {
+                refreshSubscribers.push(async (newToken) => {
+                    if (newToken) {
+                        try {
+                            const newHeaders = { ...authHeaders(), ...options.headers };
+                            const retryRes = await fetch(API + path, { ...options, headers: newHeaders });
+                            if (retryRes.status === 401) {
+                                logout();
+                                resolve(null);
+                                return;
+                            }
+                            const retryData = await retryRes.json().catch(() => ({}));
+                            if (!retryRes.ok) throw new Error(retryData.error || 'Request failed');
+                            resolve(retryData);
+                        } catch (err) {
+                            reject(err);
+                        }
+                    } else {
+                        resolve(null);
+                    }
+                });
+            });
+        }
+
+        // Start refreshing process
+        isRefreshing = true;
+        try {
+            const refreshRes = await fetch(API + '/api/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            if (refreshRes.ok) {
+                const data = await refreshRes.json();
+                token = data.token;
+                localStorage.setItem('token', token);
+                
+                // Retry original request before triggering subscribers
+                const newHeaders = { ...authHeaders(), ...options.headers };
+                const retryRes = await fetch(API + path, { ...options, headers: newHeaders });
+                const retryData = await retryRes.json().catch(() => ({}));
+
+                // Notify subscribers waiting in queue
+                onRefreshed(token);
+                isRefreshing = false;
+
+                if (!retryRes.ok) throw new Error(retryData.error || 'Request failed');
+                return retryData;
+            } else {
+                onRefreshed(null);
+                isRefreshing = false;
+                logout();
+                return null;
+            }
+        } catch (err) {
+            onRefreshed(null);
+            isRefreshing = false;
+            logout();
+            return null;
+        }
+    }
+    
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Request failed');
     return data;
 }
@@ -233,6 +302,7 @@ const pageTitles = {
     contracts: 'Contracts',
     officers: 'Contracting Officers',
     notifications: 'Notifications',
+    reports: 'Executive Dashboard',
     admin: 'Administration'
 };
 
@@ -257,7 +327,11 @@ function navigateTo(page) {
     else if (page === 'contracts') loadContracts();
     else if (page === 'officers') loadOfficers();
     else if (page === 'notifications') loadNotifications();
+    else if (page === 'reports') loadReports();
     else if (page === 'admin') loadAdmin();
+    else if (typeof window[`load${page.charAt(0).toUpperCase() + page.slice(1)}`] === 'function') {
+        window[`load${page.charAt(0).toUpperCase() + page.slice(1)}`]();
+    }
 }
 
 $$('.nav-item').forEach(item => {
@@ -1655,10 +1729,76 @@ $$('.admin-tab').forEach(tab => {
         $$('.admin-tab-content').forEach(c => c.classList.remove('active'));
         tab.classList.add('active');
         $(`#adminTab${tab.dataset.adminTab.charAt(0).toUpperCase() + tab.dataset.adminTab.slice(1)}`).classList.add('active');
-        // Auto-load email settings when the tab is activated
+        // Auto-load settings or logs when the tab is activated
         if (tab.dataset.adminTab === 'email') loadEmailSettings();
+        if (tab.dataset.adminTab === 'audit') loadAuditLogs();
     });
 });
+
+// ========================================
+// Audit Logs Functions
+// ========================================
+
+let auditPage = 1;
+const auditPageLimit = 50;
+
+async function loadAuditLogs(page = 1) {
+    auditPage = page;
+    try {
+        const data = await api(`/api/admin/audit-logs?page=${auditPage}&limit=${auditPageLimit}`);
+        if (!data) return;
+        
+        const tbody = $('#auditTableBody');
+        const empty = $('#auditEmpty');
+        
+        if (data.data.length === 0) {
+            tbody.innerHTML = '';
+            empty.style.display = 'block';
+        } else {
+            empty.style.display = 'none';
+            tbody.innerHTML = data.data.map(log => {
+                const dateStr = new Date(log.created_at).toLocaleString();
+                const userName = log.user_name ? `${escHtml(log.user_name)} (${escHtml(log.user_email)})` : 'System / Unknown';
+                const actionBadge = `<span class="badge" style="background:var(--bg-secondary); color:var(--text);">${escHtml(log.action)}</span>`;
+                
+                let detailsHtml = '';
+                if (log.old_value || log.new_value) {
+                    const params = `${JSON.stringify(log.old_value || null).replace(/'/g, "&#39;")}, ${JSON.stringify(log.new_value || null).replace(/'/g, "&#39;")}`;
+                    detailsHtml = `<button class="btn btn-sm" onclick='viewAuditDetails(${params})'>View Details</button>`;
+                }
+
+                return `<tr>
+                    <td style="white-space: nowrap; font-size: 0.85rem; color:var(--text-muted);">${dateStr}</td>
+                    <td>${userName}</td>
+                    <td>${actionBadge}</td>
+                    <td><strong>${escHtml(log.entity_type)}</strong></td>
+                    <td>${log.entity_id || '-'}</td>
+                    <td>${detailsHtml}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        const totalPages = Math.ceil(data.total / data.limit) || 1;
+        $('#auditPageInfo').textContent = `Page ${data.page} of ${totalPages} (Total logs: ${data.total})`;
+        
+        $('#btnAuditPrev').disabled = (data.page <= 1);
+        $('#btnAuditNext').disabled = (data.page >= totalPages);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+if ($('#btnRefreshAudit')) $('#btnRefreshAudit').addEventListener('click', () => loadAuditLogs(1));
+if ($('#btnAuditPrev')) $('#btnAuditPrev').addEventListener('click', () => loadAuditLogs(auditPage - 1));
+if ($('#btnAuditNext')) $('#btnAuditNext').addEventListener('click', () => loadAuditLogs(auditPage + 1));
+
+window.viewAuditDetails = function(oldVal, newVal) {
+    let msg = '';
+    if (oldVal) msg += '--- OLD VALUE ---\n' + JSON.stringify(oldVal, null, 2) + '\n\n';
+    if (newVal) msg += '--- NEW VALUE ---\n' + JSON.stringify(newVal, null, 2);
+    if (!msg) msg = 'No details available for this log entry.';
+    alert('Audit Details:\n\n' + msg);
+};
 
 // ========================================
 // Email Settings Functions
@@ -3976,7 +4116,155 @@ window.changeInvoiceStatus = async function(invoiceId, status, poId, contractId)
 };
 
 // Ensure loading the vendors view triggers fetch
+// Ensure loading the vendors view triggers fetch
 const origLoadPage = window.loadPage;
 window.loadPage = function(page) {
     if (page === 'vendors') loadVendors();
+    if (origLoadPage) origLoadPage(page);
 };
+
+// ===== Executive Reports Priority 3 =====
+async function loadReports() {
+    try {
+        const data = await api('/api/reports/dashboard');
+        if (!data) return;
+
+        // Populate Top Stats
+        $('#repTotalSpend').textContent = '$' + (data.totalSpend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        $('#repSlaCompliance').textContent = (data.slaCompliance || 0) + '%';
+        $('#repExpiringContracts').textContent = (data.expiringContracts ? data.expiringContracts.length : 0);
+
+        // Process Area Chart
+        const procChart = $('#repProcessChart');
+        procChart.innerHTML = '';
+        if (data.byProcess && data.byProcess.length > 0) {
+            const max = Math.max(...data.byProcess.map(p => parseInt(p.count)));
+            data.byProcess.forEach(p => {
+                const w = Math.max((parseInt(p.count) / max) * 100, 2);
+                procChart.insertAdjacentHTML('beforeend', `
+                    <div class="bar-row">
+                        <div class="bar-label">${escHtml(p.process_name.replace(/_/g, ' '))}</div>
+                        <div class="bar-track">
+                            <div class="bar-fill bg-success" style="width: ${w}%;"></div>
+                        </div>
+                        <div class="bar-value">${p.count}</div>
+                    </div>
+                `);
+            });
+        } else {
+            procChart.innerHTML = '<div class="empty-state">No files tracked yet</div>';
+        }
+
+        // Intake Trend Chart (Months)
+        const inChart = $('#repIntakeChart');
+        inChart.innerHTML = '';
+        if (data.intakeTrend && data.intakeTrend.length > 0) {
+            const maxReq = Math.max(...data.intakeTrend.map(i => parseInt(i.count)));
+            data.intakeTrend.forEach(i => {
+                const w = Math.max((parseInt(i.count) / maxReq) * 100, 2);
+                inChart.insertAdjacentHTML('beforeend', `
+                    <div class="bar-row">
+                        <div class="bar-label" style="width:80px;">${escHtml(i.month)}</div>
+                        <div class="bar-track">
+                            <div class="bar-fill" style="width: ${w}%; background-color: var(--primary);"></div>
+                        </div>
+                        <div class="bar-value">${i.count}</div>
+                    </div>
+                `);
+            });
+        } else {
+            inChart.innerHTML = '<div class="empty-state">No triage data available</div>';
+        }
+
+        // Vendors
+        const tbodyVendors = $('#repVendorsTable tbody');
+        tbodyVendors.innerHTML = '';
+        if (data.topVendors && data.topVendors.length > 0) {
+            data.topVendors.forEach(v => {
+                const val = parseFloat(v.total_value) || 0;
+                tbodyVendors.insertAdjacentHTML('beforeend', `
+                    <tr>
+                        <td>${escHtml(v.vendor_name)}</td>
+                        <td>${v.contract_count}</td>
+                        <td style="font-weight: 600;">$${val.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    </tr>
+                `);
+            });
+        } else {
+            tbodyVendors.innerHTML = '<tr><td colspan="3" class="text-center" style="color:var(--text-muted); padding:20px;">No contract awards yet</td></tr>';
+        }
+
+        // Expirations
+        const tbodyExp = $('#repExpiringTable tbody');
+        tbodyExp.innerHTML = '';
+        if (data.expiringContracts && data.expiringContracts.length > 0) {
+            data.expiringContracts.forEach(c => {
+                const dList = new Date(c.final_end_date).toLocaleDateString();
+                tbodyExp.insertAdjacentHTML('beforeend', `
+                    <tr>
+                        <td>
+                            <div>${escHtml(c.contract_number || 'N/A')}</div>
+                            <div style="font-size:0.8rem; color:var(--text-muted);">PR: ${escHtml(c.pr_number)}</div>
+                        </td>
+                        <td>${escHtml(c.contractor_name || 'N/A')}</td>
+                        <td style="color: var(--warning); font-weight: 600;">${dList}</td>
+                    </tr>
+                `);
+            });
+        } else {
+            tbodyExp.innerHTML = '<tr><td colspan="3" class="text-center" style="color:var(--text-muted); padding:20px;">No contracts expiring in the next 90 days</td></tr>';
+        }
+
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// Export SLA Performance Report
+$('#btnExportSLA')?.addEventListener('click', async () => {
+    try {
+        const btn = $('#btnExportSLA');
+        btn.disabled = true;
+        btn.innerHTML = '<div class="spinner"></div> Exporting...';
+        
+        const rawData = await api('/api/reports/sla');
+        if (!rawData || rawData.length === 0) {
+            showToast('No SLA data available to export', 'error');
+            btn.disabled = false;
+            btn.innerHTML = 'Export SLA Report';
+            return;
+        }
+
+        // Convert data logic to Excel
+        const wsData = [];
+        wsData.push(['Officer Name', 'Process Type', 'Step Name', 'PR Number', 'Started At', 'Completed At', 'SLA Target (Days)', 'SLA Met']);
+        
+        rawData.forEach(row => {
+            wsData.push([
+                row.officer_name,
+                row.process_name,
+                row.step_name,
+                row.pr_number,
+                row.started_at ? new Date(row.started_at).toLocaleString() : '',
+                row.completed_at ? new Date(row.completed_at).toLocaleString() : '',
+                row.sla_days,
+                row.sla_met ? 'Yes' : 'No'
+            ]);
+        });
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        
+        XLSX.utils.book_append_sheet(wb, ws, "SLA Performance");
+        XLSX.writeFile(wb, `SLA_Performance_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+        showToast('SLA Report downloaded successfully');
+
+        btn.disabled = false;
+        btn.innerHTML = 'Export SLA Report';
+    } catch (err) {
+        showToast(err.message, 'error');
+        $('#btnExportSLA').disabled = false;
+        $('#btnExportSLA').innerHTML = 'Export SLA Report';
+    }
+});

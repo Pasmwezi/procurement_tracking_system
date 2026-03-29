@@ -4,6 +4,9 @@ const pool = require('../db/pool');
 const { sendAssignmentEmail } = require('../services/emailService');
 const multer = require('multer');
 const XLSX = require('xlsx');
+const { body, query } = require('express-validator');
+const { validateRequest } = require('../middleware/validate');
+const { logAction } = require('../services/auditLogger');
 
 // Multer: memory storage (no disk writes)
 const upload = multer({
@@ -28,11 +31,17 @@ async function logStatusChange(dbOrPool, triageFileId, fromStatus, toStatus, cha
 }
 
 // GET /api/triage — list triage files (scoped to team leader's team)
-router.get('/', async (req, res) => {
+router.get('/', [
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+    validateRequest
+], async (req, res) => {
     try {
-        let query = `
-            SELECT tf.*, t.name AS team_name, u.display_name AS created_by_name,
-                   f.pr_number AS assigned_pr_number
+        const page = req.query.page || 1;
+        const limit = req.query.limit || 50;
+        const offset = (page - 1) * limit;
+
+        let baseQuery = `
             FROM triage_files tf
             LEFT JOIN teams t ON t.id = tf.team_id
             LEFT JOIN users u ON u.id = tf.created_by
@@ -52,11 +61,30 @@ router.get('/', async (req, res) => {
             conditions.push(`tf.status = $${params.length}`);
         }
 
-        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
-        query += ' ORDER BY tf.created_at DESC';
+        let whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
-        const result = await pool.query(query, params);
-        res.json(result.rows);
+        // Get total count
+        const countRes = await pool.query(`SELECT COUNT(*) ${baseQuery} ${whereClause}`, params);
+        const total = parseInt(countRes.rows[0].count, 10);
+
+        // Get paginated data
+        params.push(limit, offset);
+        const dataQuery = `
+            SELECT tf.*, t.name AS team_name, u.display_name AS created_by_name,
+                   f.pr_number AS assigned_pr_number
+            ${baseQuery}
+            ${whereClause}
+            ORDER BY tf.created_at DESC
+            LIMIT $${params.length - 1} OFFSET $${params.length}
+        `;
+        const result = await pool.query(dataQuery, params);
+
+        res.json({
+            data: result.rows,
+            total,
+            page,
+            limit
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -126,11 +154,14 @@ router.get('/:id(\\d+)', async (req, res) => {
 });
 
 // POST /api/triage — create new triage file
-router.post('/', async (req, res) => {
+router.post('/', [
+    body('pr_number').trim().notEmpty().withMessage('PR Number is required'),
+    body('title').trim().notEmpty().withMessage('Title is required'),
+    body('business_owner').trim().notEmpty().withMessage('Business owner is required'),
+    body('estimated_value').optional({ nullable: true }).isFloat({ min: 0 }).withMessage('Must be a valid amount'),
+    validateRequest
+], async (req, res) => {
     const { pr_number, title, estimated_value, business_owner, team_id } = req.body;
-    if (!pr_number || !title || !business_owner) {
-        return res.status(400).json({ error: 'pr_number, title, and business_owner are required' });
-    }
 
     try {
         const result = await pool.query(
@@ -148,6 +179,14 @@ router.post('/', async (req, res) => {
 
         // Log initial status
         await logStatusChange(pool, result.rows[0].id, null, 'Triaged', req.user.id, 'File triaged');
+        await logAction({
+            userId: req.user.id,
+            action: 'triage.create',
+            entityType: 'triage_file',
+            entityId: result.rows[0].id,
+            newValue: { pr_number, title },
+            ipAddress: req.ip
+        });
 
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -180,12 +219,12 @@ router.put('/:id', async (req, res) => {
 });
 
 // PUT /api/triage/:id/status — change status
-router.put('/:id/status', async (req, res) => {
+router.put('/:id/status', [
+    body('status').isIn(['Triaged', 'Missing Document(s)', 'Assigned', 'Awarded', 'Cancelled']).withMessage('Invalid status'),
+    body('cancellation_reason').optional().isString(),
+    validateRequest
+], async (req, res) => {
     const { status } = req.body;
-    const valid = ['Triaged', 'Missing Document(s)', 'Assigned', 'Awarded', 'Cancelled'];
-    if (!status || !valid.includes(status)) {
-        return res.status(400).json({ error: `Status must be one of: ${valid.join(', ')}` });
-    }
 
     try {
         const existing = await pool.query('SELECT * FROM triage_files WHERE id = $1', [req.params.id]);
@@ -214,6 +253,15 @@ router.put('/:id/status', async (req, res) => {
 
         // Log status change
         await logStatusChange(pool, req.params.id, oldStatus, status, req.user.id);
+        await logAction({
+            userId: req.user.id,
+            action: 'triage.status_change',
+            entityType: 'triage_file',
+            entityId: req.params.id,
+            oldValue: { status: oldStatus },
+            newValue: { status },
+            ipAddress: req.ip
+        });
 
         res.json(result.rows[0]);
     } catch (err) {
@@ -329,11 +377,14 @@ router.delete('/:id/missing-docs/:docId', async (req, res) => {
 });
 
 // POST /api/triage/:id/assign — assign triaged file to an officer
-router.post('/:id/assign', async (req, res) => {
+router.post('/:id/assign', [
+    body('officer_id').isInt().withMessage('officer_id must be an integer'),
+    body('process_name').trim().notEmpty().withMessage('process_name is required'),
+    body('assigned_date').optional({ nullable: true }).isISO8601().withMessage('Must be valid date'),
+    body('current_step_order').optional({ nullable: true }).isInt(),
+    validateRequest
+], async (req, res) => {
     const { officer_id, process_name, assigned_date, current_step_order } = req.body;
-    if (!officer_id || !process_name) {
-        return res.status(400).json({ error: 'officer_id and process_name are required' });
-    }
 
     const client = await pool.connect();
     try {
@@ -407,6 +458,15 @@ router.post('/:id/assign', async (req, res) => {
         const officerName = await client.query('SELECT display_name FROM users WHERE id = $1', [officer_id]);
         await logStatusChange(client, req.params.id, 'Triaged', 'Assigned', req.user.id,
             `Assigned to ${officerName.rows[0]?.display_name || 'officer'} (${process_name.replace(/_/g, ' ')})`);
+
+        await logAction({
+            userId: req.user.id,
+            action: 'triage.assign',
+            entityType: 'file',
+            entityId: file.id,
+            newValue: { pr_number: triageFile.pr_number, officer_id, process_name },
+            ipAddress: req.ip
+        });
 
         await client.query('COMMIT');
 

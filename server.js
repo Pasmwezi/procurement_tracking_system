@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const cron = require('node-cron');
 const path = require('path');
+const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');
 
 const pool = require('./db/pool');
 const { requireAuth, requireRole } = require('./middleware/auth');
@@ -16,17 +18,29 @@ const { checkSLAs } = require('./services/slaChecker');
 const vendorsRouter = require('./routes/vendors');
 const bidsRouter = require('./routes/bids');
 const purchaseOrdersRouter = require('./routes/purchaseOrders');
+const reportsRouter = require('./routes/reports');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+const corsOptions = {
+    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
+    credentials: true // allow cookies
+};
+app.use(cors(corsOptions));
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 requests per windowMs
+    message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
+});
+
 // Public routes (no auth required)
-app.use('/api/auth', authRouter);
+app.use('/api/auth', authLimiter, authRouter);
 
 // Health check (public)
 app.get('/api/health', async (req, res) => {
@@ -52,6 +66,9 @@ app.use('/api/triage', requireAuth, requireRole('team_leader'), triageRouter);
 app.use('/api/vendors', requireAuth, requireRole('team_leader', 'officer'), vendorsRouter);
 app.use('/api/bids', requireAuth, requireRole('team_leader', 'officer'), bidsRouter);
 app.use('/api/purchase-orders', requireAuth, requireRole('team_leader', 'officer'), purchaseOrdersRouter);
+
+// Priority-3 routes
+app.use('/api/reports', requireAuth, requireRole('team_leader', 'admin'), reportsRouter);
 
 // Manual SLA check trigger (team_leader only)
 app.post('/api/sla-check', requireAuth, requireRole('team_leader'), async (req, res) => {
@@ -252,6 +269,24 @@ async function start() {
                 paid_date DATE,
                 notes TEXT,
                 created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        // Priority-3 migrations
+        await pool.query(`
+            ALTER TABLE notifications ALTER COLUMN step_id DROP NOT NULL;
+        `);
+        // Priority-4 migrations
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                action VARCHAR(100) NOT NULL,
+                entity_type VARCHAR(50),
+                entity_id INTEGER,
+                old_value JSONB,
+                new_value JSONB,
+                ip_address VARCHAR(45),
                 created_at TIMESTAMP DEFAULT NOW()
             )
         `);

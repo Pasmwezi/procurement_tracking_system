@@ -2,22 +2,29 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
 const { sendAssignmentEmail } = require('../services/emailService');
+const { body, query } = require('express-validator');
+const { validateRequest } = require('../middleware/validate');
+const { logAction } = require('../services/auditLogger');
 
 // GET /api/files — list files with role-based scoping
 // Team Leader: all files (can assign cross-team)
 // Officer: only files assigned to them
-router.get('/', async (req, res) => {
+router.get('/', [
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+    validateRequest
+], async (req, res) => {
     try {
-        let query = `
-      SELECT f.*, u.display_name AS officer_name, u.email AS officer_email, u.team_id AS officer_team_id,
-             t.name AS officer_team_name,
-             ps.step_name AS current_step_name, ps.sla_days, ps.cum_days, ps.step_order,
-             (SELECT COUNT(*) FROM process_steps WHERE process_name = f.process_name) AS total_steps
+        const page = req.query.page || 1;
+        const limit = req.query.limit || 50;
+        const offset = (page - 1) * limit;
+
+        let baseQuery = `
       FROM files f
       JOIN users u ON u.id = f.officer_id
       LEFT JOIN teams t ON t.id = u.team_id
       LEFT JOIN process_steps ps ON ps.id = f.current_step_id
-    `;
+        `;
         const params = [];
         const conditions = [];
 
@@ -51,10 +58,25 @@ router.get('/', async (req, res) => {
             conditions.push(`f.process_name = $${params.length}`);
         }
 
-        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
-        query += ' ORDER BY f.created_at DESC';
+        let whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
-        const result = await pool.query(query, params);
+        // Get total count
+        const countRes = await pool.query(`SELECT COUNT(*) ${baseQuery} ${whereClause}`, params);
+        const total = parseInt(countRes.rows[0].count, 10);
+
+        // Get paginated data
+        params.push(limit, offset);
+        const dataQuery = `
+          SELECT f.*, u.display_name AS officer_name, u.email AS officer_email, u.team_id AS officer_team_id,
+                 t.name AS officer_team_name,
+                 ps.step_name AS current_step_name, ps.sla_days, ps.cum_days, ps.step_order,
+                 (SELECT COUNT(*) FROM process_steps WHERE process_name = f.process_name) AS total_steps
+          ${baseQuery}
+          ${whereClause}
+          ORDER BY f.created_at DESC
+          LIMIT $${params.length - 1} OFFSET $${params.length}
+        `;
+        const result = await pool.query(dataQuery, params);
 
         const files = result.rows.map(f => {
             let is_overdue = false;
@@ -70,7 +92,12 @@ router.get('/', async (req, res) => {
             return { ...f, is_overdue, step_due_date };
         });
 
-        res.json(files);
+        res.json({
+            data: files,
+            total,
+            page,
+            limit
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -255,15 +282,21 @@ router.get('/:id(\\d+)', async (req, res) => {
 });
 
 // POST /api/files — create new file (team leaders only, supports backdating)
-router.post('/', async (req, res) => {
+router.post('/', [
+    body('pr_number').trim().notEmpty().withMessage('pr_number is required'),
+    body('title').trim().notEmpty().withMessage('title is required'),
+    body('process_name').trim().notEmpty().withMessage('process_name is required'),
+    body('officer_id').isInt().withMessage('officer_id must be an integer'),
+    body('assigned_date').optional({ nullable: true }).isISO8601(),
+    body('current_step_order').optional({ nullable: true }).isInt(),
+    body('estimated_value').optional({ nullable: true }).isFloat({ min: 0 }),
+    validateRequest
+], async (req, res) => {
     if (req.user.role !== 'team_leader') {
         return res.status(403).json({ error: 'Only team leaders can create files' });
     }
 
     const { pr_number, title, process_name, officer_id, assigned_date, current_step_order, estimated_value } = req.body;
-    if (!pr_number || !title || !process_name || !officer_id) {
-        return res.status(400).json({ error: 'pr_number, title, process_name, and officer_id are required' });
-    }
 
     const client = await pool.connect();
     try {
@@ -331,6 +364,17 @@ router.post('/', async (req, res) => {
     `, [file.id]);
 
         const createdFile = fullFile.rows[0];
+
+        // Audit log for file creation
+        await logAction({
+            userId: req.user.id,
+            action: 'file.create',
+            entityType: 'file',
+            entityId: file.id,
+            newValue: { pr_number, title, process_name, officer_id, estimated_value },
+            ipAddress: req.ip
+        });
+
         res.status(201).json(createdFile);
 
         // Send assignment email (non-blocking)
@@ -373,7 +417,10 @@ router.put('/:id/steps/:logId/comment', async (req, res) => {
 });
 
 // PUT /api/files/:id/advance — advance to next step (team leaders only)
-router.put('/:id/advance', async (req, res) => {
+router.put('/:id/advance', [
+    body('comment').optional({ nullable: true }).isString(),
+    validateRequest
+], async (req, res) => {
     if (req.user.role !== 'team_leader') {
         return res.status(403).json({ error: 'Only team leaders can advance files' });
     }
@@ -445,6 +492,16 @@ router.put('/:id/advance', async (req, res) => {
       WHERE f.id = $1
     `, [req.params.id]);
 
+        // Audit log for file advancement
+        await logAction({
+             userId: req.user.id,
+             action: 'file.advance',
+             entityType: 'file',
+             entityId: file.id,
+             newValue: { new_step_id: next.id, comment },
+             ipAddress: req.ip
+        });
+
         res.json(updatedFile.rows[0]);
     } catch (err) {
         await client.query('ROLLBACK');
@@ -455,13 +512,15 @@ router.put('/:id/advance', async (req, res) => {
 });
 
 // PUT /api/files/:id/cancel — cancel a file (team leaders only)
-router.put('/:id/cancel', async (req, res) => {
+router.put('/:id/cancel', [
+    body('reason').trim().notEmpty().withMessage('Cancellation reason is required'),
+    validateRequest
+], async (req, res) => {
     if (req.user.role !== 'team_leader') {
         return res.status(403).json({ error: 'Only team leaders can cancel files' });
     }
 
     const { reason } = req.body;
-    if (!reason) return res.status(400).json({ error: 'Cancellation reason is required' });
 
     const client = await pool.connect();
     try {
@@ -497,6 +556,16 @@ router.put('/:id/cancel', async (req, res) => {
             'SELECT * FROM files WHERE id = $1',
             [req.params.id]
         );
+
+        // Audit log for file cancellation
+        await logAction({
+            userId: req.user.id,
+            action: 'file.cancel',
+            entityType: 'file',
+            entityId: file.id,
+            newValue: { reason },
+            ipAddress: req.ip
+        });
 
         res.json(updatedFile.rows[0]);
     } catch (err) {
@@ -788,15 +857,20 @@ router.get('/:id/contracts', async (req, res) => {
 });
 
 // POST /api/files/:id/contracts — create a new contract (Team Leader only)
-router.post('/:id/contracts', async (req, res) => {
+router.post('/:id/contracts', [
+    body('contract_number').trim().notEmpty().withMessage('Contract number is required'),
+    body('start_date').isISO8601().withMessage('Must be valid start date'),
+    body('end_date').isISO8601().withMessage('Must be valid end date'),
+    body('has_options').optional().isBoolean(),
+    body('number_of_options').optional({ nullable: true }).isInt({ min: 0 }),
+    body('contractor_name').optional({ nullable: true }).isString(),
+    validateRequest
+], async (req, res) => {
     if (req.user.role !== 'team_leader') {
         return res.status(403).json({ error: 'Only team leaders can create contracts' });
     }
 
     const { contract_number, start_date, end_date, has_options, number_of_options, contractor_name } = req.body;
-    if (!start_date || !end_date || !contract_number) {
-        return res.status(400).json({ error: 'contract_number, start_date, and end_date are required' });
-    }
 
     try {
         // Verify file is completed
@@ -811,6 +885,17 @@ router.post('/:id/contracts', async (req, res) => {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
             [req.params.id, contract_number, start_date, end_date, has_options || false, number_of_options || null, contractor_name || null, req.user.id]
         );
+
+        // Log contract creation
+        await logAction({
+            userId: req.user.id,
+            action: 'file.create_contract',
+            entityType: 'contract',
+            entityId: result.rows[0].id,
+            newValue: { file_id: req.params.id, contract_number, start_date, end_date },
+            ipAddress: req.ip
+        });
+
         res.status(201).json(result.rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });
