@@ -2202,8 +2202,9 @@ async function refreshTriageTable() {
     const status = $('#filterTriageStatus').value;
     if (status) params.set('status', status);
 
-    const items = await api(`/api/triage?${params}`);
-    if (!items) return;
+    const res = await api(`/api/triage?${params}`);
+    if (!res) return;
+    const items = res.data || [];
 
     const tbody = $('#triageBody');
     const empty = $('#triageEmpty');
@@ -2262,8 +2263,9 @@ $('#searchTriage').addEventListener('input', () => {
     if (status) params.set('status', status);
     if (searchTerm) params.set('search', searchTerm);
     // Reload with search param
-    api(`/api/triage?${params}`).then(items => {
-        if (!items) return;
+    api(`/api/triage?${params}`).then(res => {
+        if (!res) return;
+        const items = res.data || [];
         const tbody = $('#triageBody');
         const empty = $('#triageEmpty');
         if (items.length === 0) {
