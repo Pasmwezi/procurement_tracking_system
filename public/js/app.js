@@ -599,8 +599,9 @@ async function refreshFilesTable() {
     if (status)  params.set('status', status);
     if (search)  params.set('search', search);
 
-    const files = await api(`/api/files?${params}`);
-    if (!files) return;
+    const res = await api(`/api/files?${params}`);
+    if (!res) return;
+    const files = res.data || [];
 
     const tbody = $('#filesBody');
     const empty = $('#filesEmpty');
