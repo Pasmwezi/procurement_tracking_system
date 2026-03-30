@@ -528,8 +528,9 @@ async function loadDashboard() {
 
         // Recent files
         const recent = $('#recentFiles');
-        const files = await api('/api/files?status=Active');
-        if (files && files.length > 0) {
+        const filesRes = await api('/api/files?status=Active');
+        const files = (filesRes && filesRes.data) ? filesRes.data : [];
+        if (files.length > 0) {
             recent.innerHTML = files.slice(0, 5).map(f => `
                 <div class="recent-file-item" style="cursor:pointer" onclick="viewFileDetail(${f.id})">
                     <div class="recent-file-left">
@@ -1021,11 +1022,13 @@ let currentContractFile = null;
 async function loadContracts() {
     try {
         // Fetch only completed files for contract management
-        const url = '/api/files' + (currentUser.role === 'team_leader' && teamLeaderViewScope === 'team' ? '' : '?team_id=me');
-        const files = await api(url);
-        if (!files) return;
-        
-        contractFiles = files.filter(f => f.status === 'Completed');
+        const baseUrl = currentUser.role === 'team_leader' && teamLeaderViewScope === 'team'
+            ? '/api/files?status=Completed'
+            : '/api/files?team_id=me&status=Completed';
+        const res = await api(baseUrl);
+        if (!res) return;
+
+        contractFiles = (res.data || []).filter(f => f.status === 'Completed');
         renderContractFilesList(contractFiles);
         
         // Clear detail panel if current file is no longer in the list
