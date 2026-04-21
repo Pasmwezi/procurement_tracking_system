@@ -69,7 +69,7 @@ A Dockerized web application for team leaders to track procurement files assigne
 ```bash
 # Clone the repository
 git clone https://github.com/Pasmwezi/procurement_tracking_system.git
-cd file_tracking
+cd procurement_tracking_system
 
 # Build and start
 docker compose up --build -d
