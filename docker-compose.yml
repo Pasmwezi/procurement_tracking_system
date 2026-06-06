@@ -1,3 +1,5 @@
+name: procurement_tracking_system
+
 services:
   db:
     image: postgres:16-alpine
@@ -53,7 +55,6 @@ services:
 
 volumes:
   pgdata:
-
 
 networks:
   app-network:

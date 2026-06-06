@@ -691,6 +691,382 @@ async function refreshFilesTable() {
     }).join('');
 }
 
+// ===== Gantt Timeline =====
+let timelineViewMode = 'gantt'; // 'vertical' or 'gantt'
+
+function renderGanttTimeline(steps, stepLog, fileCreatedAt, fileStatus, isOverdue) {
+    const dateFmt = (d) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const dayMs = 86400000;
+
+    // Build step data with actual dates
+    const stepData = steps.map((step, idx) => {
+        const log = stepLog.find(l => l.step_id === step.id);
+        let status = 'pending';
+        let startDate = null;
+        let endDate = null;
+        let actualDays = 0;
+
+        if (log && log.completed_at) {
+            status = 'completed';
+            startDate = new Date(log.started_at);
+            endDate = new Date(log.completed_at);
+            actualDays = Math.max(1, Math.round((endDate - startDate) / dayMs));
+        } else if (log && !log.completed_at) {
+            status = isOverdue ? 'overdue' : 'active';
+            startDate = new Date(log.started_at);
+            endDate = null; // Still in progress
+            actualDays = Math.max(1, Math.round((new Date() - startDate) / dayMs));
+        }
+
+        return {
+            ...step,
+            log,
+            status,
+            startDate,
+            endDate,
+            actualDays,
+            slaDays: Math.max(step.sla_days || 1, 1)
+        };
+    });
+
+    // Calculate timeline range
+    const fileStart = new Date(fileCreatedAt);
+    fileStart.setHours(0, 0, 0, 0);
+
+    // Find the earliest and latest dates
+    let timelineStart = new Date(fileStart);
+    let timelineEnd = new Date(fileStart);
+
+    // Calculate projected end from cumulative SLA days
+    const totalSlaDays = steps.reduce((sum, s) => sum + (s.sla_days || 0), 0);
+    const projectedEnd = new Date(fileStart);
+    projectedEnd.setDate(projectedEnd.getDate() + totalSlaDays + 7); // +7 buffer
+
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    // Extend timeline to encompass all actual dates
+    for (const sd of stepData) {
+        if (sd.startDate && sd.startDate < timelineStart) timelineStart = new Date(sd.startDate);
+        if (sd.endDate && sd.endDate > timelineEnd) timelineEnd = new Date(sd.endDate);
+        if (sd.startDate && !sd.endDate) {
+            // Active step: extend to today + some buffer
+            const activeEnd = new Date(Math.max(now.getTime(), sd.startDate.getTime() + sd.slaDays * dayMs));
+            if (activeEnd > timelineEnd) timelineEnd = new Date(activeEnd);
+        }
+    }
+
+    // Ensure timeline goes at least to projected end or today
+    if (projectedEnd > timelineEnd) timelineEnd = new Date(projectedEnd);
+    if (now > timelineEnd) timelineEnd = new Date(now);
+
+    // Add buffer
+    timelineStart.setDate(timelineStart.getDate() - 3);
+    timelineEnd.setDate(timelineEnd.getDate() + 5);
+
+    const totalDays = Math.max(Math.round((timelineEnd - timelineStart) / dayMs), 14);
+    const pxPerDay = Math.max(8, Math.min(20, 700 / totalDays)); // Adaptive pixel width
+    const totalWidth = totalDays * pxPerDay;
+
+    // Helper: date to percentage position
+    const dateToLeft = (d) => {
+        const dayOffset = (new Date(d).getTime() - timelineStart.getTime()) / dayMs;
+        return (dayOffset / totalDays) * 100;
+    };
+
+    // Build month/week header
+    const months = [];
+    const cursor = new Date(timelineStart);
+    cursor.setDate(1); // Start from 1st of month
+    while (cursor <= timelineEnd) {
+        const monthStart = new Date(cursor);
+        cursor.setMonth(cursor.getMonth() + 1);
+        const monthEnd = new Date(Math.min(cursor.getTime(), timelineEnd.getTime()));
+        const mName = monthStart.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        const mDays = Math.round((monthEnd - monthStart) / dayMs);
+        const mWidth = (mDays / totalDays) * 100;
+
+        // Weeks within this month
+        const weeks = [];
+        const wCursor = new Date(monthStart);
+        while (wCursor < monthEnd) {
+            const wStart = new Date(wCursor);
+            wCursor.setDate(wCursor.getDate() + 7);
+            const wEnd = new Date(Math.min(wCursor.getTime(), monthEnd.getTime()));
+            const wDays = Math.round((wEnd - wStart) / dayMs);
+            weeks.push({
+                label: wStart.getDate(),
+                widthPct: (wDays / mDays) * 100
+            });
+        }
+
+        months.push({ name: mName, widthPct: mWidth, weeks });
+    }
+
+    // Summary stats
+    const completedSteps = stepData.filter(s => s.status === 'completed').length;
+    const totalSteps = stepData.filter(s => s.step_name !== 'Completed').length;
+    const elapsedDays = Math.round((now - fileStart) / dayMs);
+
+    let summaryHtml = `
+    <div class="gantt-summary">
+        <div class="gantt-summary-stat">
+            <span class="gantt-summary-value">${completedSteps}/${totalSteps}</span>
+            <span class="gantt-summary-label">Steps Done</span>
+        </div>
+        <div class="gantt-summary-stat">
+            <span class="gantt-summary-value">${elapsedDays}d</span>
+            <span class="gantt-summary-label">Elapsed</span>
+        </div>
+        <div class="gantt-summary-stat">
+            <span class="gantt-summary-value">${totalSlaDays}d</span>
+            <span class="gantt-summary-label">Total SLA</span>
+        </div>
+        <div class="gantt-summary-stat">
+            <span class="gantt-summary-value" style="color:${fileStatus === 'Completed' ? 'var(--success)' : isOverdue ? 'var(--danger)' : 'var(--accent-light)'}">${fileStatus === 'Completed' ? 'Done' : isOverdue ? 'Overdue' : 'On Track'}</span>
+            <span class="gantt-summary-label">Status</span>
+        </div>
+    </div>`;
+
+    // Legend
+    let legendHtml = `
+    <div class="gantt-legend">
+        <div class="gantt-legend-item"><div class="gantt-legend-swatch swatch-completed"></div>Completed</div>
+        <div class="gantt-legend-item"><div class="gantt-legend-swatch swatch-active"></div>In Progress</div>
+        <div class="gantt-legend-item"><div class="gantt-legend-swatch swatch-overdue"></div>Overdue</div>
+        <div class="gantt-legend-item"><div class="gantt-legend-swatch swatch-pending"></div>Pending</div>
+    </div>`;
+
+    // Time axis header
+    let timeAxisHtml = `
+    <div class="gantt-time-axis">
+        <div class="gantt-time-label-col">Step</div>
+        <div class="gantt-time-bar-area" style="width:${totalWidth}px; min-width:${totalWidth}px;">
+            <div style="display:flex; width:100%;">
+                ${months.map(m => `
+                <div class="gantt-month-block" style="width:${m.widthPct}%; flex-shrink:0;">
+                    <div class="gantt-month-label">${m.name}</div>
+                    <div class="gantt-week-row">
+                        ${m.weeks.map(w => `
+                        <div class="gantt-week-cell" style="width:${w.widthPct}%">${w.label}</div>
+                        `).join('')}
+                    </div>
+                </div>
+                `).join('')}
+            </div>
+        </div>
+    </div>`;
+
+    // Today line position
+    const todayLeft = dateToLeft(now);
+    const todayInRange = todayLeft >= 0 && todayLeft <= 100;
+
+    // Step rows
+    let bodyHtml = `<div class="gantt-body" style="position:relative;">`;
+
+    for (const sd of stepData) {
+        // Skip the "Completed" pseudo-step
+        if (sd.step_name === 'Completed') continue;
+
+        const rowCls = sd.status === 'completed' ? 'gantt-row-completed' :
+                       sd.status === 'active' ? 'gantt-row-active' :
+                       sd.status === 'overdue' ? 'gantt-row-overdue' : '';
+
+        let barHtml = '';
+
+        if (sd.status === 'completed' && sd.startDate) {
+            // Completed: show actual bar
+            const left = dateToLeft(sd.startDate);
+            const barDays = Math.max(1, Math.round((sd.endDate - sd.startDate) / dayMs));
+            const width = (barDays / totalDays) * 100;
+            barHtml = `<div class="gantt-bar gantt-bar-completed"
+                style="left:${left}%; width:${width}%;"
+                data-step="${escHtml(sd.step_name)}"
+                data-sla="${sd.slaDays}"
+                data-start="${dateFmt(sd.startDate)}"
+                data-end="${dateFmt(sd.endDate)}"
+                data-actual="${barDays}"
+                data-status="Completed">
+                <span class="gantt-bar-label">${barDays}d</span>
+            </div>`;
+        } else if ((sd.status === 'active' || sd.status === 'overdue') && sd.startDate) {
+            // Active/overdue: show bar from start to now
+            const left = dateToLeft(sd.startDate);
+            const barDays = Math.max(1, sd.actualDays);
+            const width = (barDays / totalDays) * 100;
+            const barCls = sd.status === 'overdue' ? 'gantt-bar-overdue' : 'gantt-bar-active';
+            barHtml = `<div class="gantt-bar ${barCls}"
+                style="left:${left}%; width:${width}%;"
+                data-step="${escHtml(sd.step_name)}"
+                data-sla="${sd.slaDays}"
+                data-start="${dateFmt(sd.startDate)}"
+                data-end="In Progress"
+                data-actual="${barDays}"
+                data-status="${sd.status === 'overdue' ? 'Overdue' : 'Active'}">
+                <span class="gantt-bar-label">${barDays}d</span>
+            </div>`;
+
+            // Show the planned SLA boundary as an extension stripe if overdue
+            if (sd.status === 'overdue') {
+                const plannedEnd = new Date(sd.startDate);
+                plannedEnd.setDate(plannedEnd.getDate() + sd.slaDays);
+                const plannedLeft = dateToLeft(plannedEnd);
+                const overdueWidth = ((barDays - sd.slaDays) / totalDays) * 100;
+                if (overdueWidth > 0) {
+                    barHtml += `<div class="gantt-bar-overdue-extension"
+                        style="left:${plannedLeft}%; width:${overdueWidth}%;">
+                    </div>`;
+                }
+            }
+        } else {
+            // Pending: show projected bar based on where previous step ends
+            const prevCompleted = stepData.filter(s => s.status === 'completed');
+            const lastCompleted = prevCompleted.length > 0 ? prevCompleted[prevCompleted.length - 1] : null;
+            const activeStep = stepData.find(s => s.status === 'active' || s.status === 'overdue');
+
+            let projStart;
+            if (activeStep && activeStep.startDate) {
+                // Project from active step's start + its SLA
+                projStart = new Date(activeStep.startDate);
+                // Sum SLA days of steps between active and this pending step
+                let gapDays = 0;
+                let counting = false;
+                for (const s of stepData) {
+                    if (s === activeStep) { counting = true; gapDays = s.slaDays; continue; }
+                    if (counting && s !== sd) { gapDays += s.slaDays; }
+                    if (s === sd) break;
+                }
+                projStart.setDate(projStart.getDate() + gapDays);
+            } else if (lastCompleted && lastCompleted.endDate) {
+                projStart = new Date(lastCompleted.endDate);
+                let gapDays = 0;
+                let counting = false;
+                for (const s of stepData) {
+                    if (s === lastCompleted) { counting = true; continue; }
+                    if (counting && s !== sd) { gapDays += s.slaDays; }
+                    if (s === sd) break;
+                }
+                projStart.setDate(projStart.getDate() + gapDays);
+            } else {
+                projStart = new Date(fileStart);
+                projStart.setDate(projStart.getDate() + (sd.cum_days - sd.sla_days));
+            }
+
+            const left = dateToLeft(projStart);
+            const width = (sd.slaDays / totalDays) * 100;
+            barHtml = `<div class="gantt-bar gantt-bar-pending"
+                style="left:${left}%; width:${Math.max(width, 0.5)}%;"
+                data-step="${escHtml(sd.step_name)}"
+                data-sla="${sd.slaDays}"
+                data-start="Projected: ${dateFmt(projStart)}"
+                data-end="Pending"
+                data-actual="—"
+                data-status="Pending">
+                <span class="gantt-bar-label">${sd.slaDays}d</span>
+            </div>`;
+        }
+
+        bodyHtml += `
+        <div class="gantt-row ${rowCls}">
+            <div class="gantt-step-label" title="${escHtml(sd.step_name)}">
+                <span class="gantt-step-number">${sd.step_order}</span>
+                <span class="gantt-step-name">${escHtml(sd.step_name)}</span>
+            </div>
+            <div class="gantt-bar-area" style="width:${totalWidth}px; min-width:${totalWidth}px;">
+                ${barHtml}
+            </div>
+        </div>`;
+    }
+
+    // Today line across the body
+    if (todayInRange) {
+        const todayPx = 180 + (totalWidth * todayLeft / 100);
+        bodyHtml += `<div class="gantt-today-line" style="left:${todayPx}px;"></div>`;
+    }
+
+    bodyHtml += `</div>`;
+
+    return `
+    <div class="gantt-wrapper" id="ganttWrapper">
+        ${summaryHtml}
+        ${legendHtml}
+        <div class="gantt-scroll-container" id="ganttScrollContainer">
+            ${timeAxisHtml}
+            ${bodyHtml}
+        </div>
+    </div>`;
+}
+
+// Setup Gantt tooltips (called after DOM is rendered)
+function setupGanttTooltips() {
+    const bars = document.querySelectorAll('.gantt-bar');
+    let tooltip = null;
+
+    bars.forEach(bar => {
+        bar.addEventListener('mouseenter', (e) => {
+            if (tooltip) tooltip.remove();
+            tooltip = document.createElement('div');
+            tooltip.className = 'gantt-tooltip';
+            tooltip.innerHTML = `
+                <div class="gantt-tooltip-title">${bar.dataset.step}</div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">SLA</span><span class="gantt-tooltip-value">${bar.dataset.sla} days</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Started</span><span class="gantt-tooltip-value">${bar.dataset.start}</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Ended</span><span class="gantt-tooltip-value">${bar.dataset.end}</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Actual</span><span class="gantt-tooltip-value">${bar.dataset.actual} days</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Status</span><span class="gantt-tooltip-value">${bar.dataset.status}</span></div>
+            `;
+            document.body.appendChild(tooltip);
+            const rect = bar.getBoundingClientRect();
+            tooltip.style.left = Math.min(rect.left, window.innerWidth - 320) + 'px';
+            tooltip.style.top = (rect.bottom + 8) + 'px';
+        });
+
+        bar.addEventListener('mouseleave', () => {
+            if (tooltip) { tooltip.remove(); tooltip = null; }
+        });
+    });
+}
+
+// Auto-scroll Gantt to active step
+function scrollGanttToActive() {
+    const container = document.getElementById('ganttScrollContainer');
+    const activeBar = container?.querySelector('.gantt-bar-active, .gantt-bar-overdue');
+    if (container && activeBar) {
+        const barLeft = activeBar.offsetLeft;
+        const containerWidth = container.clientWidth;
+        container.scrollLeft = Math.max(0, barLeft - containerWidth / 3);
+    }
+}
+
+// Switch between Gantt and vertical timeline views
+function switchTimelineView(mode, fileId) {
+    timelineViewMode = mode;
+
+    const ganttContainer = document.getElementById('ganttViewContainer');
+    const verticalContainer = document.getElementById('verticalViewContainer');
+    const toggleBtns = document.querySelectorAll('.timeline-view-toggle .btn-toggle-view');
+
+    if (ganttContainer) ganttContainer.style.display = mode === 'gantt' ? 'block' : 'none';
+    if (verticalContainer) verticalContainer.style.display = mode === 'vertical' ? 'block' : 'none';
+
+    // Update active state on toggle buttons
+    toggleBtns.forEach((btn, idx) => {
+        if ((idx === 0 && mode === 'gantt') || (idx === 1 && mode === 'vertical')) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    // Re-initialize Gantt tooltips when switching to Gantt view
+    if (mode === 'gantt') {
+        setTimeout(() => {
+            setupGanttTooltips();
+            scrollGanttToActive();
+        }, 50);
+    }
+}
+
 // File detail
 async function viewFileDetail(id) {
     try {
@@ -786,11 +1162,50 @@ async function viewFileDetail(id) {
             setTimeout(() => renderBidsForFile(f.id, canManageBids && f.can_enter_bids), 0);
         }
 
-        html += `
-        <h3 class="timeline-title">Step Timeline</h3>
-        <div class="timeline-vertical">`;
-
+        // ===== Timeline section with toggle =====
+        // Determine canAdvanceCurrent from step data
         let canAdvanceCurrent = false;
+        for (const step of f.steps) {
+            const log = f.step_log.find(l => l.step_id === step.id);
+            if (log && !log.completed_at && currentUser.role === 'team_leader') {
+                canAdvanceCurrent = true;
+            }
+        }
+
+        // Build toggle buttons
+        html += `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+            <h3 class="timeline-title" style="margin-bottom:0; border-bottom:none; padding-bottom:0;">Progress Timeline</h3>
+            <div class="timeline-view-toggle">
+                <button class="btn-toggle-view ${timelineViewMode === 'gantt' ? 'active' : ''}" onclick="switchTimelineView('gantt', ${f.id})">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="6" x2="15" y2="6"></line>
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="18" x2="12" y2="18"></line>
+                    </svg>
+                    Project Timeline
+                </button>
+                <button class="btn-toggle-view ${timelineViewMode === 'vertical' ? 'active' : ''}" onclick="switchTimelineView('vertical', ${f.id})">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <circle cx="12" cy="5" r="2"></circle>
+                        <circle cx="12" cy="12" r="2"></circle>
+                        <circle cx="12" cy="19" r="2"></circle>
+                    </svg>
+                    Step Details
+                </button>
+            </div>
+        </div>`;
+
+        // ===== Gantt view =====
+        const ganttHtml = renderGanttTimeline(f.steps, f.step_log, f.created_at, f.status, f.is_overdue);
+        html += `<div id="ganttViewContainer" style="display:${timelineViewMode === 'gantt' ? 'block' : 'none'};">
+            ${ganttHtml}
+        </div>`;
+
+        // ===== Vertical timeline view =====
+        html += `<div id="verticalViewContainer" style="display:${timelineViewMode === 'vertical' ? 'block' : 'none'};">`;
+        html += `<div class="timeline-vertical">`;
 
         for (const step of f.steps) {
             const log = f.step_log.find(l => l.step_id === step.id);
@@ -806,7 +1221,6 @@ async function viewFileDetail(id) {
                 stateCls = 'timeline-active';
                 const sDate = new Date(log.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 dateInfo = `Started: ${sDate} &nbsp; <span class="${f.is_overdue ? 'text-danger' : 'text-accent'}">${f.is_overdue ? 'Overdue' : 'In Progress'}</span>`;
-                if (currentUser.role === 'team_leader') canAdvanceCurrent = true;
             }
 
             let commentHtml = '';
@@ -840,7 +1254,7 @@ async function viewFileDetail(id) {
             </div>`;
         }
 
-        html += `</div>`;
+        html += `</div></div>`; // Close timeline-vertical + verticalViewContainer
 
         if (canAdvanceCurrent) {
             html += `
@@ -877,6 +1291,14 @@ async function viewFileDetail(id) {
 
         $('#detailBody').innerHTML = html;
         openModal('modalFileDetail');
+
+        // Post-render: setup Gantt tooltips and scroll
+        if (timelineViewMode === 'gantt') {
+            setTimeout(() => {
+                setupGanttTooltips();
+                scrollGanttToActive();
+            }, 100);
+        }
     } catch (err) {
         showToast(err.message, 'error');
     }
@@ -2101,28 +2523,39 @@ window.openProcessStepsModal = async function (name) {
 
 function renderProcessStepsList() {
     const container = $('#processStepsList');
-    container.innerHTML = editProcessStepsData.map((step, index) => `
+    let runningCum = 0;
+    container.innerHTML = editProcessStepsData.map((step, index) => {
+        const sla = parseInt(step.sla_days) || 0;
+        runningCum += sla;
+        return `
         <div class="step-edit-row" data-index="${index}">
-            <div class="step-edit-drag" title="Drag handles (up/down array visually)">
+            <div class="step-edit-drag" title="Drag handle">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="8" x2="20" y2="8"></line><line x1="4" y1="16" x2="20" y2="16"></line></svg>
             </div>
-            <div class="step-edit-order">${index + 1}.</div>
-            <input type="text" class="text-input step-edit-input" value="${escapeHtml(step.step_name)}" placeholder="Step Name" onchange="updateStepData(${index}, 'step_name', this.value)">
-            <input type="number" class="text-input step-edit-sla" value="${step.sla_days}" min="0" title="SLA Days" onchange="updateStepData(${index}, 'sla_days', this.value)">
-            <span class="text-muted" style="font-size:0.8rem;">days</span>
+            <div class="step-edit-order">Step ${index + 1}</div>
+            <input type="text" class="text-input step-edit-input" value="${escapeHtml(step.step_name)}" placeholder="Enter step description..." oninput="updateStepData(${index}, 'step_name', this.value)">
+            <div class="step-edit-sla-group">
+                <span class="step-edit-sla-label">SLA</span>
+                <input type="number" class="text-input step-edit-sla" value="${step.sla_days}" min="0" title="SLA Days" oninput="updateStepData(${index}, 'sla_days', this.value)">
+                <span style="font-size:0.78rem; color:var(--text-muted);">days</span>
+            </div>
+            <span class="step-edit-cum" title="Cumulative SLA timeline">Cum: ${runningCum}d</span>
             
-            <div style="margin-left:auto; display:flex; gap:4px;">
+            <div class="step-edit-actions">
                 <button class="btn-step-action" onclick="moveStep(${index}, -1)" ${index === 0 ? 'disabled style="opacity:0.3"' : ''} title="Move Up">▲</button>
                 <button class="btn-step-action" onclick="moveStep(${index}, 1)" ${index === editProcessStepsData.length - 1 ? 'disabled style="opacity:0.3"' : ''} title="Move Down">▼</button>
                 <button class="btn-step-action danger" onclick="removeStep(${index})" title="Remove Step">✖</button>
             </div>
         </div>
-    `).join('') || `<div class="text-center text-muted" style="padding: 20px;">No steps defined yet. Minimum 1 required.</div>`;
+    `;
+    }).join('') || `<div class="text-center text-muted" style="padding: 20px;">No steps defined yet. Minimum 1 required.</div>`;
 }
 
 window.updateStepData = function (index, field, value) {
     if (field === 'sla_days') value = parseInt(value) || 0;
-    editProcessStepsData[index][field] = value;
+    if (editProcessStepsData[index]) {
+        editProcessStepsData[index][field] = value;
+    }
 };
 
 window.moveStep = function (index, dir) {
