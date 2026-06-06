@@ -115,7 +115,7 @@ router.put('/:id/transfer', async (req, res) => {
         const targetOfficers = {};
         for (const tid of targetIds) {
             const oRes = await pool.query(
-                "SELECT id, email, display_name AS name FROM users WHERE id = $1",
+                'SELECT id, email, display_name AS name FROM users WHERE id = $1',
                 [tid]
             );
             if (oRes.rows.length > 0) targetOfficers[tid] = oRes.rows[0];

@@ -3,11 +3,18 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
+const rateLimit = require('express-rate-limit');
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 requests per windowMs
+    message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
+});
 
 const JWT_SECRET = process.env.JWT_SECRET || 'file-tracker-secret-key-change-in-production';
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
@@ -29,8 +36,21 @@ router.post('/login', async (req, res) => {
         const token = jwt.sign(
             { id: user.id, role: user.role, teamId: user.team_id },
             JWT_SECRET,
-            { expiresIn: '24h' }
+            { expiresIn: '8h' }
         );
+
+        const refreshToken = jwt.sign(
+            { id: user.id, isRefresh: true },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.cookie('refreshToken', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
 
         res.json({
             token,
@@ -47,6 +67,77 @@ router.post('/login', async (req, res) => {
         console.error('Login error:', err.message);
         res.status(500).json({ error: 'Server error' });
     }
+});
+
+// POST /api/auth/refresh
+router.post('/refresh', async (req, res) => {
+    const refreshToken = req.cookies?.refreshToken;
+    if (!refreshToken) {
+        return res.status(401).json({ error: 'No refresh token provided' });
+    }
+
+    try {
+        const decoded = jwt.verify(refreshToken, JWT_SECRET);
+        
+        if (!decoded.isRefresh) {
+            return res.status(401).json({ error: 'Invalid token type' });
+        }
+
+        const result = await pool.query(
+            'SELECT id, email, display_name, role, team_id, password_changed, is_active FROM users WHERE id = $1',
+            [decoded.id]
+        );
+
+        if (result.rows.length === 0 || !result.rows[0].is_active) {
+            return res.status(401).json({ error: 'Account inactive or deleted' });
+        }
+
+        const user = result.rows[0];
+
+        const token = jwt.sign(
+            { id: user.id, role: user.role, teamId: user.team_id },
+            JWT_SECRET,
+            { expiresIn: '8h' }
+        );
+
+        // Optionally, rotate refresh token here as well
+        const newRefreshToken = jwt.sign(
+            { id: user.id, isRefresh: true },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.cookie('refreshToken', newRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        });
+
+        res.json({ token, user: {
+            id: user.id,
+            email: user.email,
+            displayName: user.display_name,
+            role: user.role,
+            teamId: user.team_id,
+            passwordChanged: user.password_changed
+        }});
+    } catch (err) {
+        if (err.name === 'TokenExpiredError') {
+            return res.status(401).json({ error: 'Refresh token expired' });
+        }
+        return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+});
+
+// POST /api/auth/logout
+router.post('/logout', (req, res) => {
+    res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict'
+    });
+    res.json({ success: true });
 });
 
 // PUT /api/auth/password — change own password (any authenticated user)
@@ -128,7 +219,7 @@ router.get('/setup-status', async (req, res) => {
         );
         const changed = result.rows.length > 0 ? result.rows[0].password_changed : true;
         res.json({ admin_password_changed: !!changed });
-    } catch (err) {
+    } catch (_err) {
         res.json({ admin_password_changed: true }); // fail safe — hide hint on error
     }
 });

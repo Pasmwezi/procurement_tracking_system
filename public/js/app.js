@@ -36,10 +36,79 @@ function setupTeamToggles() {
 
 function authHeaders() { return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }; }
 
+let isRefreshing = false;
+let refreshSubscribers = [];
+
+function onRefreshed(newToken) {
+    refreshSubscribers.forEach(cb => cb(newToken));
+    refreshSubscribers = [];
+}
+
 async function api(path, options = {}) {
-    const res = await fetch(API + path, { ...options, headers: { ...authHeaders(), ...options.headers } });
-    if (res.status === 401) { logout(); return null; }
-    const data = await res.json();
+    let res = await fetch(API + path, { ...options, headers: { ...authHeaders(), ...options.headers } });
+    
+    if (res.status === 401) { 
+        // If already refreshing, queue the request
+        if (isRefreshing) {
+            return new Promise((resolve, reject) => {
+                refreshSubscribers.push(async (newToken) => {
+                    if (newToken) {
+                        try {
+                            const newHeaders = { ...authHeaders(), ...options.headers };
+                            const retryRes = await fetch(API + path, { ...options, headers: newHeaders });
+                            if (retryRes.status === 401) {
+                                logout();
+                                resolve(null);
+                                return;
+                            }
+                            const retryData = await retryRes.json().catch(() => ({}));
+                            if (!retryRes.ok) throw new Error(retryData.error || 'Request failed');
+                            resolve(retryData);
+                        } catch (err) {
+                            reject(err);
+                        }
+                    } else {
+                        resolve(null);
+                    }
+                });
+            });
+        }
+
+        // Start refreshing process
+        isRefreshing = true;
+        try {
+            const refreshRes = await fetch(API + '/api/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            if (refreshRes.ok) {
+                const data = await refreshRes.json();
+                token = data.token;
+                localStorage.setItem('token', token);
+                
+                // Retry original request before triggering subscribers
+                const newHeaders = { ...authHeaders(), ...options.headers };
+                const retryRes = await fetch(API + path, { ...options, headers: newHeaders });
+                const retryData = await retryRes.json().catch(() => ({}));
+
+                // Notify subscribers waiting in queue
+                onRefreshed(token);
+                isRefreshing = false;
+
+                if (!retryRes.ok) throw new Error(retryData.error || 'Request failed');
+                return retryData;
+            } else {
+                onRefreshed(null);
+                isRefreshing = false;
+                logout();
+                return null;
+            }
+        } catch (err) {
+            onRefreshed(null);
+            isRefreshing = false;
+            logout();
+            return null;
+        }
+    }
+    
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Request failed');
     return data;
 }
@@ -96,8 +165,6 @@ async function showApp(userData) {
     $('#loginScreen').classList.remove('active');
     document.body.classList.add('authenticated');
 
-    console.log('showApp called with user:', currentUser);
-
     // Update user UI
     const initials = currentUser.displayName.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
     const roleLbl = { admin: 'App Admin', team_leader: 'Team Leader', officer: 'Officer' }[currentUser.role] || currentUser.role;
@@ -116,25 +183,19 @@ async function showApp(userData) {
 
     // Navigate to first visible page
     const visibleNavs = [...$$('.nav-item')].filter(el => el.style.display !== 'none');
-    console.log('Visible nav items:', visibleNavs.map(el => el.dataset.page));
-
     if (visibleNavs.length > 0) {
-        console.log('Navigating to first visible page:', visibleNavs[0].dataset.page);
         navigateTo(visibleNavs[0].dataset.page);
     } else {
         console.warn('No visible nav items found for role:', currentUser.role);
     }
 
     // Check forced password change
-    console.log('Password changed?', currentUser.passwordChanged);
     if (currentUser.passwordChanged === false) { // Explicit check
-        console.log('Forcing password change...');
         forcePasswordChange();
     }
 }
 
 function applyRoleVisibility() {
-    console.log('Applying role visibility for:', currentUser.role);
     $$('[data-roles]').forEach(el => {
         const roles = el.dataset.roles.split(' ');
         const isVisible = roles.includes(currentUser.role);
@@ -145,12 +206,9 @@ function applyRoleVisibility() {
 
 // ===== Login Form =====
 const loginForm = $('#formLogin');
-console.log('Login form found:', loginForm);
-
 if (loginForm) {
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        console.log('Login submitted');
         const email = $('#loginEmail').value.trim();
         const password = $('#loginPassword').value;
         const errDiv = $('#loginError');
@@ -167,7 +225,6 @@ if (loginForm) {
         btn.textContent = 'Signing in...';
 
         try {
-            console.log('Sending login request for:', email);
             const res = await fetch(API + '/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -175,8 +232,6 @@ if (loginForm) {
             });
 
             const data = await res.json();
-            console.log('Login response:', res.status, data);
-
             if (!res.ok) {
                 errDiv.textContent = data.error || 'Login failed';
                 errDiv.style.display = 'block';
@@ -187,8 +242,6 @@ if (loginForm) {
 
             token = data.token;
             localStorage.setItem('token', token);
-            console.log('Login successful, calling showApp');
-
             // IMPORTANT: await showApp so errors are caught by catch block
             try {
                 await showApp(data.user);
@@ -233,6 +286,7 @@ const pageTitles = {
     contracts: 'Contracts',
     officers: 'Contracting Officers',
     notifications: 'Notifications',
+    reports: 'Executive Dashboard',
     admin: 'Administration'
 };
 
@@ -257,7 +311,11 @@ function navigateTo(page) {
     else if (page === 'contracts') loadContracts();
     else if (page === 'officers') loadOfficers();
     else if (page === 'notifications') loadNotifications();
+    else if (page === 'reports') loadReports();
     else if (page === 'admin') loadAdmin();
+    else if (typeof window[`load${page.charAt(0).toUpperCase() + page.slice(1)}`] === 'function') {
+        window[`load${page.charAt(0).toUpperCase() + page.slice(1)}`]();
+    }
 }
 
 $$('.nav-item').forEach(item => {
@@ -266,14 +324,10 @@ $$('.nav-item').forEach(item => {
 
 // ===== Modal =====
 function openModal(id) {
-    console.log('openModal called for:', id);
-    const els = $$('.modal');
-    console.log(`Found ${els.length} modals to hide`);
-    els.forEach(m => m.style.display = 'none');
+    $$('.modal').forEach(m => m.style.display = 'none');
 
     const target = $(`#${id}`);
     if (target) {
-        console.log('Showing target modal:', id);
         target.style.display = 'block';
     } else {
         console.error('Target modal not found:', id);
@@ -281,7 +335,6 @@ function openModal(id) {
         return;
     }
 
-    console.log('Activating overlay');
     const overlay = $('#modalOverlay');
     if (overlay) {
         overlay.classList.add('active');
@@ -475,8 +528,9 @@ async function loadDashboard() {
 
         // Recent files
         const recent = $('#recentFiles');
-        const files = await api('/api/files?status=Active');
-        if (files && files.length > 0) {
+        const filesRes = await api('/api/files?status=Active');
+        const files = (filesRes && filesRes.data) ? filesRes.data : [];
+        if (files.length > 0) {
             recent.innerHTML = files.slice(0, 5).map(f => `
                 <div class="recent-file-item" style="cursor:pointer" onclick="viewFileDetail(${f.id})">
                     <div class="recent-file-left">
@@ -533,7 +587,8 @@ async function refreshFilesTable() {
     const params = new URLSearchParams();
     const officer = $('#filterOfficer').value;
     const process = $('#filterProcess').value;
-    const status = $('#filterStatus').value;
+    const status  = $('#filterStatus').value;
+    const search  = $('#searchFiles').value;
 
     if (officer === 'team_me' && currentUser.role === 'team_leader') {
         params.set('team_id', 'me');
@@ -542,10 +597,12 @@ async function refreshFilesTable() {
     }
 
     if (process) params.set('process_name', process);
-    if (status) params.set('status', status);
+    if (status)  params.set('status', status);
+    if (search)  params.set('search', search);
 
-    const files = await api(`/api/files?${params}`);
-    if (!files) return;
+    const res = await api(`/api/files?${params}`);
+    if (!res) return;
+    const files = res.data || [];
 
     const tbody = $('#filesBody');
     const empty = $('#filesEmpty');
@@ -634,6 +691,382 @@ async function refreshFilesTable() {
     }).join('');
 }
 
+// ===== Gantt Timeline =====
+let timelineViewMode = 'gantt'; // 'vertical' or 'gantt'
+
+function renderGanttTimeline(steps, stepLog, fileCreatedAt, fileStatus, isOverdue) {
+    const dateFmt = (d) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const dayMs = 86400000;
+
+    // Build step data with actual dates
+    const stepData = steps.map((step, idx) => {
+        const log = stepLog.find(l => l.step_id === step.id);
+        let status = 'pending';
+        let startDate = null;
+        let endDate = null;
+        let actualDays = 0;
+
+        if (log && log.completed_at) {
+            status = 'completed';
+            startDate = new Date(log.started_at);
+            endDate = new Date(log.completed_at);
+            actualDays = Math.max(1, Math.round((endDate - startDate) / dayMs));
+        } else if (log && !log.completed_at) {
+            status = isOverdue ? 'overdue' : 'active';
+            startDate = new Date(log.started_at);
+            endDate = null; // Still in progress
+            actualDays = Math.max(1, Math.round((new Date() - startDate) / dayMs));
+        }
+
+        return {
+            ...step,
+            log,
+            status,
+            startDate,
+            endDate,
+            actualDays,
+            slaDays: Math.max(step.sla_days || 1, 1)
+        };
+    });
+
+    // Calculate timeline range
+    const fileStart = new Date(fileCreatedAt);
+    fileStart.setHours(0, 0, 0, 0);
+
+    // Find the earliest and latest dates
+    let timelineStart = new Date(fileStart);
+    let timelineEnd = new Date(fileStart);
+
+    // Calculate projected end from cumulative SLA days
+    const totalSlaDays = steps.reduce((sum, s) => sum + (s.sla_days || 0), 0);
+    const projectedEnd = new Date(fileStart);
+    projectedEnd.setDate(projectedEnd.getDate() + totalSlaDays + 7); // +7 buffer
+
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    // Extend timeline to encompass all actual dates
+    for (const sd of stepData) {
+        if (sd.startDate && sd.startDate < timelineStart) timelineStart = new Date(sd.startDate);
+        if (sd.endDate && sd.endDate > timelineEnd) timelineEnd = new Date(sd.endDate);
+        if (sd.startDate && !sd.endDate) {
+            // Active step: extend to today + some buffer
+            const activeEnd = new Date(Math.max(now.getTime(), sd.startDate.getTime() + sd.slaDays * dayMs));
+            if (activeEnd > timelineEnd) timelineEnd = new Date(activeEnd);
+        }
+    }
+
+    // Ensure timeline goes at least to projected end or today
+    if (projectedEnd > timelineEnd) timelineEnd = new Date(projectedEnd);
+    if (now > timelineEnd) timelineEnd = new Date(now);
+
+    // Add buffer
+    timelineStart.setDate(timelineStart.getDate() - 3);
+    timelineEnd.setDate(timelineEnd.getDate() + 5);
+
+    const totalDays = Math.max(Math.round((timelineEnd - timelineStart) / dayMs), 14);
+    const pxPerDay = Math.max(8, Math.min(20, 700 / totalDays)); // Adaptive pixel width
+    const totalWidth = totalDays * pxPerDay;
+
+    // Helper: date to percentage position
+    const dateToLeft = (d) => {
+        const dayOffset = (new Date(d).getTime() - timelineStart.getTime()) / dayMs;
+        return (dayOffset / totalDays) * 100;
+    };
+
+    // Build month/week header
+    const months = [];
+    const cursor = new Date(timelineStart);
+    cursor.setDate(1); // Start from 1st of month
+    while (cursor <= timelineEnd) {
+        const monthStart = new Date(cursor);
+        cursor.setMonth(cursor.getMonth() + 1);
+        const monthEnd = new Date(Math.min(cursor.getTime(), timelineEnd.getTime()));
+        const mName = monthStart.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        const mDays = Math.round((monthEnd - monthStart) / dayMs);
+        const mWidth = (mDays / totalDays) * 100;
+
+        // Weeks within this month
+        const weeks = [];
+        const wCursor = new Date(monthStart);
+        while (wCursor < monthEnd) {
+            const wStart = new Date(wCursor);
+            wCursor.setDate(wCursor.getDate() + 7);
+            const wEnd = new Date(Math.min(wCursor.getTime(), monthEnd.getTime()));
+            const wDays = Math.round((wEnd - wStart) / dayMs);
+            weeks.push({
+                label: wStart.getDate(),
+                widthPct: (wDays / mDays) * 100
+            });
+        }
+
+        months.push({ name: mName, widthPct: mWidth, weeks });
+    }
+
+    // Summary stats
+    const completedSteps = stepData.filter(s => s.status === 'completed').length;
+    const totalSteps = stepData.filter(s => s.step_name !== 'Completed').length;
+    const elapsedDays = Math.round((now - fileStart) / dayMs);
+
+    let summaryHtml = `
+    <div class="gantt-summary">
+        <div class="gantt-summary-stat">
+            <span class="gantt-summary-value">${completedSteps}/${totalSteps}</span>
+            <span class="gantt-summary-label">Steps Done</span>
+        </div>
+        <div class="gantt-summary-stat">
+            <span class="gantt-summary-value">${elapsedDays}d</span>
+            <span class="gantt-summary-label">Elapsed</span>
+        </div>
+        <div class="gantt-summary-stat">
+            <span class="gantt-summary-value">${totalSlaDays}d</span>
+            <span class="gantt-summary-label">Total SLA</span>
+        </div>
+        <div class="gantt-summary-stat">
+            <span class="gantt-summary-value" style="color:${fileStatus === 'Completed' ? 'var(--success)' : isOverdue ? 'var(--danger)' : 'var(--accent-light)'}">${fileStatus === 'Completed' ? 'Done' : isOverdue ? 'Overdue' : 'On Track'}</span>
+            <span class="gantt-summary-label">Status</span>
+        </div>
+    </div>`;
+
+    // Legend
+    let legendHtml = `
+    <div class="gantt-legend">
+        <div class="gantt-legend-item"><div class="gantt-legend-swatch swatch-completed"></div>Completed</div>
+        <div class="gantt-legend-item"><div class="gantt-legend-swatch swatch-active"></div>In Progress</div>
+        <div class="gantt-legend-item"><div class="gantt-legend-swatch swatch-overdue"></div>Overdue</div>
+        <div class="gantt-legend-item"><div class="gantt-legend-swatch swatch-pending"></div>Pending</div>
+    </div>`;
+
+    // Time axis header
+    let timeAxisHtml = `
+    <div class="gantt-time-axis">
+        <div class="gantt-time-label-col">Step</div>
+        <div class="gantt-time-bar-area" style="width:${totalWidth}px; min-width:${totalWidth}px;">
+            <div style="display:flex; width:100%;">
+                ${months.map(m => `
+                <div class="gantt-month-block" style="width:${m.widthPct}%; flex-shrink:0;">
+                    <div class="gantt-month-label">${m.name}</div>
+                    <div class="gantt-week-row">
+                        ${m.weeks.map(w => `
+                        <div class="gantt-week-cell" style="width:${w.widthPct}%">${w.label}</div>
+                        `).join('')}
+                    </div>
+                </div>
+                `).join('')}
+            </div>
+        </div>
+    </div>`;
+
+    // Today line position
+    const todayLeft = dateToLeft(now);
+    const todayInRange = todayLeft >= 0 && todayLeft <= 100;
+
+    // Step rows
+    let bodyHtml = `<div class="gantt-body" style="position:relative;">`;
+
+    for (const sd of stepData) {
+        // Skip the "Completed" pseudo-step
+        if (sd.step_name === 'Completed') continue;
+
+        const rowCls = sd.status === 'completed' ? 'gantt-row-completed' :
+                       sd.status === 'active' ? 'gantt-row-active' :
+                       sd.status === 'overdue' ? 'gantt-row-overdue' : '';
+
+        let barHtml = '';
+
+        if (sd.status === 'completed' && sd.startDate) {
+            // Completed: show actual bar
+            const left = dateToLeft(sd.startDate);
+            const barDays = Math.max(1, Math.round((sd.endDate - sd.startDate) / dayMs));
+            const width = (barDays / totalDays) * 100;
+            barHtml = `<div class="gantt-bar gantt-bar-completed"
+                style="left:${left}%; width:${width}%;"
+                data-step="${escHtml(sd.step_name)}"
+                data-sla="${sd.slaDays}"
+                data-start="${dateFmt(sd.startDate)}"
+                data-end="${dateFmt(sd.endDate)}"
+                data-actual="${barDays}"
+                data-status="Completed">
+                <span class="gantt-bar-label">${barDays}d</span>
+            </div>`;
+        } else if ((sd.status === 'active' || sd.status === 'overdue') && sd.startDate) {
+            // Active/overdue: show bar from start to now
+            const left = dateToLeft(sd.startDate);
+            const barDays = Math.max(1, sd.actualDays);
+            const width = (barDays / totalDays) * 100;
+            const barCls = sd.status === 'overdue' ? 'gantt-bar-overdue' : 'gantt-bar-active';
+            barHtml = `<div class="gantt-bar ${barCls}"
+                style="left:${left}%; width:${width}%;"
+                data-step="${escHtml(sd.step_name)}"
+                data-sla="${sd.slaDays}"
+                data-start="${dateFmt(sd.startDate)}"
+                data-end="In Progress"
+                data-actual="${barDays}"
+                data-status="${sd.status === 'overdue' ? 'Overdue' : 'Active'}">
+                <span class="gantt-bar-label">${barDays}d</span>
+            </div>`;
+
+            // Show the planned SLA boundary as an extension stripe if overdue
+            if (sd.status === 'overdue') {
+                const plannedEnd = new Date(sd.startDate);
+                plannedEnd.setDate(plannedEnd.getDate() + sd.slaDays);
+                const plannedLeft = dateToLeft(plannedEnd);
+                const overdueWidth = ((barDays - sd.slaDays) / totalDays) * 100;
+                if (overdueWidth > 0) {
+                    barHtml += `<div class="gantt-bar-overdue-extension"
+                        style="left:${plannedLeft}%; width:${overdueWidth}%;">
+                    </div>`;
+                }
+            }
+        } else {
+            // Pending: show projected bar based on where previous step ends
+            const prevCompleted = stepData.filter(s => s.status === 'completed');
+            const lastCompleted = prevCompleted.length > 0 ? prevCompleted[prevCompleted.length - 1] : null;
+            const activeStep = stepData.find(s => s.status === 'active' || s.status === 'overdue');
+
+            let projStart;
+            if (activeStep && activeStep.startDate) {
+                // Project from active step's start + its SLA
+                projStart = new Date(activeStep.startDate);
+                // Sum SLA days of steps between active and this pending step
+                let gapDays = 0;
+                let counting = false;
+                for (const s of stepData) {
+                    if (s === activeStep) { counting = true; gapDays = s.slaDays; continue; }
+                    if (counting && s !== sd) { gapDays += s.slaDays; }
+                    if (s === sd) break;
+                }
+                projStart.setDate(projStart.getDate() + gapDays);
+            } else if (lastCompleted && lastCompleted.endDate) {
+                projStart = new Date(lastCompleted.endDate);
+                let gapDays = 0;
+                let counting = false;
+                for (const s of stepData) {
+                    if (s === lastCompleted) { counting = true; continue; }
+                    if (counting && s !== sd) { gapDays += s.slaDays; }
+                    if (s === sd) break;
+                }
+                projStart.setDate(projStart.getDate() + gapDays);
+            } else {
+                projStart = new Date(fileStart);
+                projStart.setDate(projStart.getDate() + (sd.cum_days - sd.sla_days));
+            }
+
+            const left = dateToLeft(projStart);
+            const width = (sd.slaDays / totalDays) * 100;
+            barHtml = `<div class="gantt-bar gantt-bar-pending"
+                style="left:${left}%; width:${Math.max(width, 0.5)}%;"
+                data-step="${escHtml(sd.step_name)}"
+                data-sla="${sd.slaDays}"
+                data-start="Projected: ${dateFmt(projStart)}"
+                data-end="Pending"
+                data-actual="—"
+                data-status="Pending">
+                <span class="gantt-bar-label">${sd.slaDays}d</span>
+            </div>`;
+        }
+
+        bodyHtml += `
+        <div class="gantt-row ${rowCls}">
+            <div class="gantt-step-label" title="${escHtml(sd.step_name)}">
+                <span class="gantt-step-number">${sd.step_order}</span>
+                <span class="gantt-step-name">${escHtml(sd.step_name)}</span>
+            </div>
+            <div class="gantt-bar-area" style="width:${totalWidth}px; min-width:${totalWidth}px;">
+                ${barHtml}
+            </div>
+        </div>`;
+    }
+
+    // Today line across the body
+    if (todayInRange) {
+        const todayPx = 180 + (totalWidth * todayLeft / 100);
+        bodyHtml += `<div class="gantt-today-line" style="left:${todayPx}px;"></div>`;
+    }
+
+    bodyHtml += `</div>`;
+
+    return `
+    <div class="gantt-wrapper" id="ganttWrapper">
+        ${summaryHtml}
+        ${legendHtml}
+        <div class="gantt-scroll-container" id="ganttScrollContainer">
+            ${timeAxisHtml}
+            ${bodyHtml}
+        </div>
+    </div>`;
+}
+
+// Setup Gantt tooltips (called after DOM is rendered)
+function setupGanttTooltips() {
+    const bars = document.querySelectorAll('.gantt-bar');
+    let tooltip = null;
+
+    bars.forEach(bar => {
+        bar.addEventListener('mouseenter', (e) => {
+            if (tooltip) tooltip.remove();
+            tooltip = document.createElement('div');
+            tooltip.className = 'gantt-tooltip';
+            tooltip.innerHTML = `
+                <div class="gantt-tooltip-title">${bar.dataset.step}</div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">SLA</span><span class="gantt-tooltip-value">${bar.dataset.sla} days</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Started</span><span class="gantt-tooltip-value">${bar.dataset.start}</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Ended</span><span class="gantt-tooltip-value">${bar.dataset.end}</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Actual</span><span class="gantt-tooltip-value">${bar.dataset.actual} days</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Status</span><span class="gantt-tooltip-value">${bar.dataset.status}</span></div>
+            `;
+            document.body.appendChild(tooltip);
+            const rect = bar.getBoundingClientRect();
+            tooltip.style.left = Math.min(rect.left, window.innerWidth - 320) + 'px';
+            tooltip.style.top = (rect.bottom + 8) + 'px';
+        });
+
+        bar.addEventListener('mouseleave', () => {
+            if (tooltip) { tooltip.remove(); tooltip = null; }
+        });
+    });
+}
+
+// Auto-scroll Gantt to active step
+function scrollGanttToActive() {
+    const container = document.getElementById('ganttScrollContainer');
+    const activeBar = container?.querySelector('.gantt-bar-active, .gantt-bar-overdue');
+    if (container && activeBar) {
+        const barLeft = activeBar.offsetLeft;
+        const containerWidth = container.clientWidth;
+        container.scrollLeft = Math.max(0, barLeft - containerWidth / 3);
+    }
+}
+
+// Switch between Gantt and vertical timeline views
+function switchTimelineView(mode, fileId) {
+    timelineViewMode = mode;
+
+    const ganttContainer = document.getElementById('ganttViewContainer');
+    const verticalContainer = document.getElementById('verticalViewContainer');
+    const toggleBtns = document.querySelectorAll('.timeline-view-toggle .btn-toggle-view');
+
+    if (ganttContainer) ganttContainer.style.display = mode === 'gantt' ? 'block' : 'none';
+    if (verticalContainer) verticalContainer.style.display = mode === 'vertical' ? 'block' : 'none';
+
+    // Update active state on toggle buttons
+    toggleBtns.forEach((btn, idx) => {
+        if ((idx === 0 && mode === 'gantt') || (idx === 1 && mode === 'vertical')) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    // Re-initialize Gantt tooltips when switching to Gantt view
+    if (mode === 'gantt') {
+        setTimeout(() => {
+            setupGanttTooltips();
+            scrollGanttToActive();
+        }, 50);
+    }
+}
+
 // File detail
 async function viewFileDetail(id) {
     try {
@@ -680,13 +1113,99 @@ async function viewFileDetail(id) {
             </div>
         </div>`;
 
+        // Bids section (only for team_leader or the officer assigned to this file)
+        const canManageBids = currentUser.role === 'team_leader' || (currentUser.role === 'officer' && currentUser.id === f.officer_id);
+        if (canManageBids || f.status === 'Completed' || f.status === 'Active') {
+            let bidActionsHtml = '';
+            if (f.can_enter_bids) {
+                bidActionsHtml = `
+                    <div style="display:flex; gap:8px;">
+                        ${canManageBids && currentUser.role === 'team_leader' ? `
+                        <button class="btn btn-sm btn-secondary" onclick="openBasisOfSelection(${f.id})">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                            Selection Config
+                        </button>` : ''}
+                        ${f.basis_of_selection && canManageBids ? `
+                        <button class="btn btn-sm btn-primary" onclick="evaluateBids(${f.id})" style="background:var(--accent); border-color:var(--accent);">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                            Evaluate
+                        </button>` : ''}
+                        ${canManageBids ? `<button class="btn btn-sm btn-secondary" onclick="openAddBid(${f.id})">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                            Add Bid
+                        </button>` : ''}
+                    </div>`;
+            } else {
+                bidActionsHtml = `
+                    <div style="font-size:0.85rem; color:var(--warning); background:rgba(245, 158, 11, 0.1); padding:6px 12px; border-radius:var(--radius); border:1px solid rgba(245, 158, 11, 0.2);">
+                        ⚠️ Bids can only be entered during or after the Solicitation step.
+                    </div>`;
+            }
 
+            html += `
+            <div style="margin: 24px 0 32px; padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-color); background: var(--bg-tertiary);">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
+                    <div>
+                        <h3 style="margin:0; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                            Bids & Evaluation
+                        </h3>
+                        ${f.basis_of_selection ? `<div style="font-size:0.85rem; color:var(--text-muted); margin-top:6px;">Selection Method: <strong style="color:var(--text-primary); text-transform:capitalize;">${f.basis_of_selection.replace(/_/g, ' ')}</strong></div>` : ''}
+                    </div>
+                    ${bidActionsHtml}
+                </div>
+                <div id="evaluationResults_${f.id}" style="display:none; margin-bottom: 16px; padding: 16px; background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: var(--radius);"></div>
+                <div id="fileBidsList_${f.id}" class="bids-container" style="display:grid; gap:12px;">
+                    <div style="color:var(--text-muted); font-size:0.9rem;">Loading bids...</div>
+                </div>
+            </div>`;
+            setTimeout(() => renderBidsForFile(f.id, canManageBids && f.can_enter_bids), 0);
+        }
 
-        html += `
-        <h3 class="timeline-title">Step Timeline</h3>
-        <div class="timeline-vertical">`;
-
+        // ===== Timeline section with toggle =====
+        // Determine canAdvanceCurrent from step data
         let canAdvanceCurrent = false;
+        for (const step of f.steps) {
+            const log = f.step_log.find(l => l.step_id === step.id);
+            if (log && !log.completed_at && currentUser.role === 'team_leader') {
+                canAdvanceCurrent = true;
+            }
+        }
+
+        // Build toggle buttons
+        html += `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+            <h3 class="timeline-title" style="margin-bottom:0; border-bottom:none; padding-bottom:0;">Progress Timeline</h3>
+            <div class="timeline-view-toggle">
+                <button class="btn-toggle-view ${timelineViewMode === 'gantt' ? 'active' : ''}" onclick="switchTimelineView('gantt', ${f.id})">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="6" x2="15" y2="6"></line>
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="18" x2="12" y2="18"></line>
+                    </svg>
+                    Project Timeline
+                </button>
+                <button class="btn-toggle-view ${timelineViewMode === 'vertical' ? 'active' : ''}" onclick="switchTimelineView('vertical', ${f.id})">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <circle cx="12" cy="5" r="2"></circle>
+                        <circle cx="12" cy="12" r="2"></circle>
+                        <circle cx="12" cy="19" r="2"></circle>
+                    </svg>
+                    Step Details
+                </button>
+            </div>
+        </div>`;
+
+        // ===== Gantt view =====
+        const ganttHtml = renderGanttTimeline(f.steps, f.step_log, f.created_at, f.status, f.is_overdue);
+        html += `<div id="ganttViewContainer" style="display:${timelineViewMode === 'gantt' ? 'block' : 'none'};">
+            ${ganttHtml}
+        </div>`;
+
+        // ===== Vertical timeline view =====
+        html += `<div id="verticalViewContainer" style="display:${timelineViewMode === 'vertical' ? 'block' : 'none'};">`;
+        html += `<div class="timeline-vertical">`;
 
         for (const step of f.steps) {
             const log = f.step_log.find(l => l.step_id === step.id);
@@ -702,7 +1221,6 @@ async function viewFileDetail(id) {
                 stateCls = 'timeline-active';
                 const sDate = new Date(log.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 dateInfo = `Started: ${sDate} &nbsp; <span class="${f.is_overdue ? 'text-danger' : 'text-accent'}">${f.is_overdue ? 'Overdue' : 'In Progress'}</span>`;
-                if (currentUser.role === 'team_leader') canAdvanceCurrent = true;
             }
 
             let commentHtml = '';
@@ -736,7 +1254,7 @@ async function viewFileDetail(id) {
             </div>`;
         }
 
-        html += `</div>`;
+        html += `</div></div>`; // Close timeline-vertical + verticalViewContainer
 
         if (canAdvanceCurrent) {
             html += `
@@ -751,11 +1269,47 @@ async function viewFileDetail(id) {
             </div>`;
         }
 
+        // Cancellation reason (for cancelled files)
+        if (f.status === 'Cancelled' && f.cancellation_reason) {
+            html += `
+            <div class="modal-advance-area" style="margin-top: 16px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: var(--radius); padding: 14px 18px;">
+                <div style="font-size:0.75rem; text-transform:uppercase; color: var(--danger); font-weight:600; margin-bottom:6px;">Cancellation Reason</div>
+                <div style="color: var(--text-secondary);">${escHtml(f.cancellation_reason)}</div>
+            </div>`;
+        }
+
+        // Notes section
+        const isLeaderOrOfficer = currentUser.role === 'team_leader' || currentUser.role === 'officer';
+        html += `
+        <div style="margin-top: 24px;">
+            <h3 class="timeline-title">Notes</h3>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <textarea id="fileNotesInput" class="comment-input" style="min-height:90px;" placeholder="Add any notes or comments...">${escHtml(f.notes || '')}</textarea>
+                ${isLeaderOrOfficer ? `<button class="btn-save-comment" onclick="saveFileNotes(${f.id})">Save Notes</button>` : ''}
+            </div>
+        </div>`;
+
         $('#detailBody').innerHTML = html;
         openModal('modalFileDetail');
+
+        // Post-render: setup Gantt tooltips and scroll
+        if (timelineViewMode === 'gantt') {
+            setTimeout(() => {
+                setupGanttTooltips();
+                scrollGanttToActive();
+            }, 100);
+        }
     } catch (err) {
         showToast(err.message, 'error');
     }
+}
+
+async function saveFileNotes(fileId) {
+    const notes = $('#fileNotesInput').value;
+    try {
+        await api(`/api/files/${fileId}/notes`, { method: 'POST', body: JSON.stringify({ notes }) });
+        showToast('Notes saved');
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
 async function saveStepComment(fileId, logId) {
@@ -801,6 +1355,34 @@ async function cancelFile(id) {
     $(`#${id}`).addEventListener('change', refreshFilesTable);
 });
 
+// Live search on files
+$('#searchFiles').addEventListener('input', refreshFilesTable);
+
+// Export files (JWT-authenticated download)
+$('#btnExportFiles').addEventListener('click', async () => {
+    const params = new URLSearchParams();
+    const officer = $('#filterOfficer').value;
+    const process = $('#filterProcess').value;
+    const status  = $('#filterStatus').value;
+    const search  = $('#searchFiles').value;
+    if (officer === 'team_me' && currentUser.role === 'team_leader') params.set('team_id', 'me');
+    else if (officer && officer !== 'team_me') params.set('officer_id', officer);
+    if (process) params.set('process_name', process);
+    if (status)  params.set('status', status);
+    if (search)  params.set('search', search);
+    try {
+        const res = await fetch(`/api/files/export?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) { showToast('Export failed', 'error'); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `procurement_files_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
 // New file button
 $('#btnNewFile').addEventListener('click', async () => {
     // Populate process select
@@ -844,7 +1426,8 @@ $('#formNewFile').addEventListener('submit', async (e) => {
                 process_name: $('#inputProcess').value,
                 officer_id: parseInt($('#inputOfficer').value),
                 assigned_date: $('#inputAssignedDate').value || undefined,
-                current_step_order: $('#inputCurrentStep').value || undefined
+                current_step_order: $('#inputCurrentStep').value || undefined,
+                estimated_value: $('#inputEstimatedValue').value ? parseFloat($('#inputEstimatedValue').value) : undefined
             })
         });
         closeModal();
@@ -861,11 +1444,13 @@ let currentContractFile = null;
 async function loadContracts() {
     try {
         // Fetch only completed files for contract management
-        const url = '/api/files' + (currentUser.role === 'team_leader' && teamLeaderViewScope === 'team' ? '' : '?team_id=me');
-        const files = await api(url);
-        if (!files) return;
-        
-        contractFiles = files.filter(f => f.status === 'Completed');
+        const baseUrl = currentUser.role === 'team_leader' && teamLeaderViewScope === 'team'
+            ? '/api/files?status=Completed'
+            : '/api/files?team_id=me&status=Completed';
+        const res = await api(baseUrl);
+        if (!res) return;
+
+        contractFiles = (res.data || []).filter(f => f.status === 'Completed');
         renderContractFilesList(contractFiles);
         
         // Clear detail panel if current file is no longer in the list
@@ -931,13 +1516,15 @@ async function selectContractFile(id) {
     
     try {
         const contracts = await api(`/api/files/${id}/contracts`);
-        renderContractDetail(file, contracts || []);
+        const bids = await api(`/api/bids?file_id=${id}`);
+        const winningBid = bids.find(b => b.is_winner);
+        renderContractDetail(file, contracts || [], winningBid);
     } catch (err) {
         showToast(err.message, 'error');
     }
 }
 
-function renderContractDetail(file, contracts) {
+function renderContractDetail(file, contracts, winningBid) {
     const panel = $('#contractDetailPanel');
     const isLeader = currentUser.role === 'team_leader';
     
@@ -991,6 +1578,22 @@ function renderContractDetail(file, contracts) {
                     </svg>
                     Create New Contract
                 </h4>
+                ${winningBid ? `
+                <div style="padding: 12px; background: rgba(16, 185, 129, 0.1); border-left: 4px solid #10b981; margin-bottom: 16px; border-radius: 4px;">
+                    <strong style="color: #10b981; display: block; margin-bottom: 4px;">Winning Bid Selected</strong>
+                    <p style="margin: 0; font-size: 0.9rem; color: var(--text-secondary);">
+                        Contractor: <strong>${escHtml(winningBid.vendor_name || winningBid.vendor_name_free || 'Unknown')}</strong> 
+                        (Amount: $${parseFloat(winningBid.bid_amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})})
+                    </p>
+                </div>
+                ` : `
+                <div style="padding: 12px; background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; margin-bottom: 16px; border-radius: 4px;">
+                    <strong style="color: #f59e0b; display: block; margin-bottom: 4px;">No Winning Bid</strong>
+                    <p style="margin: 0; font-size: 0.9rem; color: var(--text-secondary);">
+                        Warning: There is no winning bid recorded for this procurement file yet.
+                    </p>
+                </div>
+                `}
                 <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
                     <div style="grid-column: 1 / -1;">
                         <label>Contract Number</label>
@@ -1017,7 +1620,7 @@ function renderContractDetail(file, contracts) {
                     </div>
                     <div style="grid-column: 1 / -1;">
                         <label>Contractor name</label>
-                        <input type="text" id="newContractContractor" class="text-input" placeholder="e.g. Acme Corp">
+                        <input type="text" id="newContractContractor" class="text-input" placeholder="e.g. Acme Corp" value="${winningBid ? escHtml(winningBid.vendor_name || winningBid.vendor_name_free || '') : ''}">
                     </div>
                 </div>
                 <div style="display: flex; gap: 12px; justify-content: flex-end;">
@@ -1115,9 +1718,28 @@ function renderContractDetail(file, contracts) {
                         </div>
                     </div>
                     ` : ''}
+
+                    <!-- PO / Receipts / Invoices sub-panel -->
+                    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px dashed var(--border-color);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                            <h5 style="margin:0; font-size:0.92rem; font-weight:600; color:var(--text-secondary); display:flex; align-items:center; gap:6px;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-light)" stroke-width="2"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>
+                                Purchase Orders
+                            </h5>
+                            <button class="btn btn-sm btn-secondary" onclick="openAddPO(${c.id})">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                Add PO
+                            </button>
+                        </div>
+                        <div id="poList_${c.id}">
+                            <div style="color:var(--text-muted); font-size:0.85rem; padding:8px 0;">Loading POs...</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             `;
+            // Load POs async after render
+            setTimeout(() => renderPOsForContract(c.id), 0);
         });
         html += `</div>`;
     }
@@ -1512,10 +2134,76 @@ $$('.admin-tab').forEach(tab => {
         $$('.admin-tab-content').forEach(c => c.classList.remove('active'));
         tab.classList.add('active');
         $(`#adminTab${tab.dataset.adminTab.charAt(0).toUpperCase() + tab.dataset.adminTab.slice(1)}`).classList.add('active');
-        // Auto-load email settings when the tab is activated
+        // Auto-load settings or logs when the tab is activated
         if (tab.dataset.adminTab === 'email') loadEmailSettings();
+        if (tab.dataset.adminTab === 'audit') loadAuditLogs();
     });
 });
+
+// ========================================
+// Audit Logs Functions
+// ========================================
+
+let auditPage = 1;
+const auditPageLimit = 50;
+
+async function loadAuditLogs(page = 1) {
+    auditPage = page;
+    try {
+        const data = await api(`/api/admin/audit-logs?page=${auditPage}&limit=${auditPageLimit}`);
+        if (!data) return;
+        
+        const tbody = $('#auditTableBody');
+        const empty = $('#auditEmpty');
+        
+        if (data.data.length === 0) {
+            tbody.innerHTML = '';
+            empty.style.display = 'block';
+        } else {
+            empty.style.display = 'none';
+            tbody.innerHTML = data.data.map(log => {
+                const dateStr = new Date(log.created_at).toLocaleString();
+                const userName = log.user_name ? `${escHtml(log.user_name)} (${escHtml(log.user_email)})` : 'System / Unknown';
+                const actionBadge = `<span class="badge" style="background:var(--bg-secondary); color:var(--text);">${escHtml(log.action)}</span>`;
+                
+                let detailsHtml = '';
+                if (log.old_value || log.new_value) {
+                    const params = `${JSON.stringify(log.old_value || null).replace(/'/g, "&#39;")}, ${JSON.stringify(log.new_value || null).replace(/'/g, "&#39;")}`;
+                    detailsHtml = `<button class="btn btn-sm" onclick='viewAuditDetails(${params})'>View Details</button>`;
+                }
+
+                return `<tr>
+                    <td style="white-space: nowrap; font-size: 0.85rem; color:var(--text-muted);">${dateStr}</td>
+                    <td>${userName}</td>
+                    <td>${actionBadge}</td>
+                    <td><strong>${escHtml(log.entity_type)}</strong></td>
+                    <td>${log.entity_id || '-'}</td>
+                    <td>${detailsHtml}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        const totalPages = Math.ceil(data.total / data.limit) || 1;
+        $('#auditPageInfo').textContent = `Page ${data.page} of ${totalPages} (Total logs: ${data.total})`;
+        
+        $('#btnAuditPrev').disabled = (data.page <= 1);
+        $('#btnAuditNext').disabled = (data.page >= totalPages);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+if ($('#btnRefreshAudit')) $('#btnRefreshAudit').addEventListener('click', () => loadAuditLogs(1));
+if ($('#btnAuditPrev')) $('#btnAuditPrev').addEventListener('click', () => loadAuditLogs(auditPage - 1));
+if ($('#btnAuditNext')) $('#btnAuditNext').addEventListener('click', () => loadAuditLogs(auditPage + 1));
+
+window.viewAuditDetails = function(oldVal, newVal) {
+    let msg = '';
+    if (oldVal) msg += '--- OLD VALUE ---\n' + JSON.stringify(oldVal, null, 2) + '\n\n';
+    if (newVal) msg += '--- NEW VALUE ---\n' + JSON.stringify(newVal, null, 2);
+    if (!msg) msg = 'No details available for this log entry.';
+    alert('Audit Details:\n\n' + msg);
+};
 
 // ========================================
 // Email Settings Functions
@@ -1940,8 +2628,9 @@ async function refreshTriageTable() {
     const status = $('#filterTriageStatus').value;
     if (status) params.set('status', status);
 
-    const items = await api(`/api/triage?${params}`);
-    if (!items) return;
+    const res = await api(`/api/triage?${params}`);
+    if (!res) return;
+    const items = res.data || [];
 
     const tbody = $('#triageBody');
     const empty = $('#triageEmpty');
@@ -1991,6 +2680,83 @@ async function refreshTriageTable() {
 }
 
 $('#filterTriageStatus').addEventListener('change', refreshTriageTable);
+
+// Live search on triage
+$('#searchTriage').addEventListener('input', () => {
+    const searchTerm = $('#searchTriage').value;
+    const params = new URLSearchParams();
+    const status = $('#filterTriageStatus').value;
+    if (status) params.set('status', status);
+    if (searchTerm) params.set('search', searchTerm);
+    // Reload with search param
+    api(`/api/triage?${params}`).then(res => {
+        if (!res) return;
+        const items = res.data || [];
+        const tbody = $('#triageBody');
+        const empty = $('#triageEmpty');
+        if (items.length === 0) {
+            tbody.innerHTML = '';
+            empty.style.display = 'flex';
+            return;
+        }
+        empty.style.display = 'none';
+        tbody.innerHTML = items.map(t => {
+            const dateStr = new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const canAssign = t.status === 'Triaged';
+            const canManage = t.status === 'Triaged' || t.status === 'Missing Document(s)';
+            return `<tr>
+                <td><span class="pr-number">${escHtml(t.pr_number)}</span></td>
+                <td><div class="file-title-cell">${escHtml(t.title)}</div></td>
+                <td>${escHtml(t.business_owner)}</td>
+                <td>${formatCurrency(t.estimated_value)}</td>
+                <td>${escHtml(t.team_name || '—')}</td>
+                <td>${triageStatusBadge(t.status)}</td>
+                <td>
+                    <div class="date-cell">
+                        <div class="date-main">${dateStr}</div>
+                        <div class="date-sub">${timeAgo(t.created_at)}</div>
+                    </div>
+                </td>
+                <td>
+                    <div class="btn-action-group">
+                        <button class="btn-action btn-view" onclick="viewTriageDetail(${t.id})">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            View
+                        </button>
+                        ${canAssign ? `<button class="btn-action btn-advance" onclick="openAssignTriage(${t.id})">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" y1="8" x2="19" y2="14"></line><line x1="22" y1="11" x2="16" y2="11"></line></svg>
+                            Assign
+                        </button>` : ''}
+                        ${canManage ? `<button class="btn-action btn-view" onclick="openMissingDocs(${t.id})" style="color: var(--warning)">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+                            Docs
+                        </button>` : ''}
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+    }).catch(err => console.error('Triage search error:', err));
+});
+
+// Export triage (JWT-authenticated download)
+$('#btnExportTriage').addEventListener('click', async () => {
+    const params = new URLSearchParams();
+    const status = $('#filterTriageStatus').value;
+    const search = $('#searchTriage').value;
+    if (status) params.set('status', status);
+    if (search) params.set('search', search);
+    try {
+        const res = await fetch(`/api/triage/export?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) { showToast('Export failed', 'error'); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `triage_files_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) { showToast(err.message, 'error'); }
+});
 
 // New triage
 $('#btnNewTriage').addEventListener('click', () => openModal('modalNewTriage'));
@@ -2142,6 +2908,25 @@ async function viewTriageDetail(id) {
             </div>`;
         }
 
+        // Cancellation reason
+        if (t.status === 'Cancelled' && t.cancellation_reason) {
+            html += `
+            <div style="margin-top: 16px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: var(--radius); padding: 14px 18px;">
+                <div style="font-size:0.75rem; text-transform:uppercase; color: var(--danger); font-weight:600; margin-bottom:6px;">Cancellation Reason</div>
+                <div style="color: var(--text-secondary);">${escHtml(t.cancellation_reason)}</div>
+            </div>`;
+        }
+
+        // Notes section
+        html += `
+        <div style="margin-top: 24px;">
+            <h3 class="timeline-title">Notes</h3>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <textarea id="triageNotesInput" class="comment-input" style="min-height:90px;" placeholder="Add any notes or comments...">${escHtml(t.notes || '')}</textarea>
+                <button class="btn-save-comment" onclick="saveTriageNotes(${t.id})">Save Notes</button>
+            </div>
+        </div>`;
+
         // Status history timeline
         if (t.status_history && t.status_history.length > 0) {
             html += `<h3 class="timeline-title" style="margin-top:24px;">Status History</h3>
@@ -2197,13 +2982,22 @@ async function removeDoc(triageId, docId) {
     } catch (err) { showToast(err.message, 'error'); }
 }
 
+async function saveTriageNotes(triageId) {
+    const notes = $('#triageNotesInput').value;
+    try {
+        await api(`/api/triage/${triageId}`, { method: 'PUT', body: JSON.stringify({ notes }) });
+        showToast('Notes saved');
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
 async function cancelTriageFile(id) {
-    if (!confirm('Are you sure you want to cancel this triage file?')) return;
+    const reason = prompt('Enter cancellation reason (optional):');
     try {
         await api(`/api/triage/${id}/status`, {
-            method: 'PUT', body: JSON.stringify({ status: 'Cancelled' })
+            method: 'PUT',
+            body: JSON.stringify({ status: 'Cancelled', cancellation_reason: reason && reason.trim() ? reason.trim() : undefined })
         });
-        showToast('Triage file cancelled');
+        showToast('File cancelled');
         closeModal();
         loadTriage();
     } catch (err) { showToast(err.message, 'error'); }
@@ -2390,10 +3184,8 @@ $('#formChangePassword').addEventListener('submit', async (e) => {
 
 // ===== Force Password Change =====
 function forcePasswordChange() {
-    console.log('forcePasswordChange called');
     const modalId = 'modalChangePassword';
     const modal = $('#' + modalId);
-    console.log('Modal element:', modal);
 
     if (!modal) {
         console.error('CRITICAL: modalChangePassword not found in DOM');
@@ -2402,9 +3194,7 @@ function forcePasswordChange() {
     }
 
     try {
-        console.log('Opening modal via openModal...');
         openModal(modalId);
-        console.log('Modal opened (style.display set to block)');
 
         const headerClose = modal.querySelector('.btn-close');
         if (headerClose) headerClose.style.display = 'none';
@@ -2414,7 +3204,6 @@ function forcePasswordChange() {
 
         let msg = modal.querySelector('.force-msg');
         if (!msg) {
-            console.log('Creating force-msg');
             msg = document.createElement('div');
             msg.className = 'force-msg';
             msg.style.cssText = 'background: var(--warning-bg, #fff3cd); color: var(--warning-text, #856404); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9rem;';
@@ -2423,9 +3212,7 @@ function forcePasswordChange() {
             if (form) form.insertBefore(msg, form.firstChild);
         }
 
-        console.log('Adding locked class to overlay');
         $('#modalOverlay').classList.add('locked');
-        console.log('forcePasswordChange complete');
     } catch (e) {
         console.error('forcePasswordChange crashed:', e);
         alert('Error in forcePasswordChange: ' + e.message);
@@ -2961,3 +3748,923 @@ async function submitFilesImport() {
 // ===== Boot =====
 setupUserMenu();
 init();
+
+// ========================================
+// PRIORITY 2: VENDORS
+// ========================================
+
+async function loadVendors() {
+    try {
+        const statusStr = $('#filterVendorStatus').value;
+        const url = statusStr ? `/api/vendors?status=${statusStr}` : '/api/vendors';
+        vendorsCache = await api(url) || [];
+        renderVendorsList();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+let vendorsCache = [];
+
+function renderVendorsList() {
+    const term = $('#searchVendors').value.toLowerCase();
+    const tbody = $('#vendorsBody');
+    const empty = $('#vendorsEmpty');
+    
+    const filtered = vendorsCache.filter(v => {
+        return v.name.toLowerCase().includes(term) ||
+               (v.category && v.category.toLowerCase().includes(term)) ||
+               (v.registration_number && v.registration_number.toLowerCase().includes(term));
+    });
+    
+    if (filtered.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = 'block';
+    } else {
+        empty.style.display = 'none';
+        const isLeader = currentUser.role === 'team_leader';
+        tbody.innerHTML = filtered.map(v => `
+            <tr>
+                <td style="font-weight:500; color:var(--text-primary)">
+                    ${escapeHtml(v.name)}
+                    ${v.notes ? `<span title="${escapeHtml(v.notes)}" style="cursor:help;opacity:0.6;margin-left:6px;">ℹ️</span>` : ''}
+                </td>
+                <td>${escapeHtml(v.category || '-')}</td>
+                <td><span style="font-family:'SF Mono',monospace;font-size:0.85em;color:var(--text-muted)">${escapeHtml(v.registration_number || '-')}</span></td>
+                <td>${v.contact_email ? `<a href="mailto:${escapeHtml(v.contact_email)}" style="color:var(--accent-light)">${escapeHtml(v.contact_email)}</a>` : '-'}</td>
+                <td>${escapeHtml(v.contact_phone || '-')}</td>
+                <td>
+                    <span class="badge" style="
+                        background: ${v.status === 'Active' ? 'rgba(16,185,129,0.1)' : v.status === 'Inactive' ? 'rgba(156,163,175,0.1)' : 'rgba(239,68,68,0.1)'};
+                        color: ${v.status === 'Active' ? '#10b981' : v.status === 'Inactive' ? '#9ca3af' : '#ef4444'};
+                        border: 1px solid ${v.status === 'Active' ? 'rgba(16,185,129,0.2)' : v.status === 'Inactive' ? 'rgba(156,163,175,0.2)' : 'rgba(239,68,68,0.2)'};
+                    ">${v.status}</span>
+                </td>
+                <td>
+                    ${isLeader ? `
+                        <button class="btn-action btn-view" onclick='editVendor(${JSON.stringify(v).replace(/'/g, "&#39;")})' title="Edit">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                        </button>
+                    ` : ''}
+                </td>
+            </tr>
+        `).join('');
+    }
+}
+
+// Vendor events
+if ($('#searchVendors')) $('#searchVendors').addEventListener('input', renderVendorsList);
+if ($('#filterVendorStatus')) $('#filterVendorStatus').addEventListener('change', loadVendors);
+if ($('#btnNewVendor')) {
+    $('#btnNewVendor').addEventListener('click', () => {
+        $('#formVendor').reset();
+        $('#editVendorId').value = '';
+        $('#modalVendorTitle').textContent = 'Add Vendor';
+        $('#vendorStatusGroup').style.display = 'none'; // New vendors are always active initially
+        openModal('modalVendor');
+    });
+}
+if ($('#formVendor')) {
+    $('#formVendor').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = $('#editVendorId').value;
+        const payload = {
+            name: $('#inputVendorName').value,
+            category: $('#inputVendorCategory').value,
+            registration_number: $('#inputVendorReg').value,
+            contact_email: $('#inputVendorEmail').value,
+            contact_phone: $('#inputVendorPhone').value,
+            address: $('#inputVendorAddress').value,
+            notes: $('#inputVendorNotes').value,
+        };
+        if (id) payload.status = $('#inputVendorStatus').value;
+
+        try {
+            if (id) {
+                await api(`/api/vendors/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+                showToast('Vendor updated');
+            } else {
+                await api('/api/vendors', { method: 'POST', body: JSON.stringify(payload) });
+                showToast('Vendor created');
+            }
+            closeModal('modalVendor');
+            loadVendors();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.editVendor = function(v) {
+    $('#formVendor').reset();
+    $('#editVendorId').value = v.id;
+    $('#modalVendorTitle').textContent = 'Edit Vendor';
+    
+    $('#inputVendorName').value = v.name;
+    $('#inputVendorCategory').value = v.category || '';
+    $('#inputVendorReg').value = v.registration_number || '';
+    $('#inputVendorEmail').value = v.contact_email || '';
+    $('#inputVendorPhone').value = v.contact_phone || '';
+    $('#inputVendorAddress').value = v.address || '';
+    $('#inputVendorNotes').value = v.notes || '';
+    
+    $('#vendorStatusGroup').style.display = 'block';
+    $('#inputVendorStatus').value = v.status;
+    
+    openModal('modalVendor');
+};
+
+// ========================================
+// PRIORITY 2: BIDS
+// ========================================
+
+async function renderBidsForFile(fileId, canManage) {
+    const container = $(`#fileBidsList_${fileId}`);
+    if (!container) return;
+    try {
+        const bids = await api(`/api/bids?file_id=${fileId}`);
+        if (!bids || bids.length === 0) {
+            container.innerHTML = `<div style="color:var(--text-muted); font-size:0.9rem; font-style:italic; padding:8px 0;">No bids recorded for this file yet.</div>`;
+            return;
+        }
+        
+        const isLeader = currentUser.role === 'team_leader';
+        container.innerHTML = bids.map(b => {
+            const vendorDisp = b.vendor_name ? escapeHtml(b.vendor_name) : (escapeHtml(b.vendor_name_free) || 'Unknown');
+            const amtStr = b.bid_amount ? '$' + parseFloat(b.bid_amount).toLocaleString() : '-';
+            const techStr = b.technical_score ? parseFloat(b.technical_score) : '-';
+            const finStr = b.financial_score ? parseFloat(b.financial_score) : '-';
+            
+            let statusBadge = '';
+            if (b.is_winner) statusBadge = `<span class="badge" style="background:rgba(16,185,129,0.1); color:#10b981; border:1px solid rgba(16,185,129,0.2); margin-left:8px;">★ WINNER</span>`;
+            else if (b.disqualified) statusBadge = `<span class="badge" style="background:rgba(239,68,68,0.1); color:#ef4444; border:1px solid rgba(239,68,68,0.2); margin-left:8px;">Disqualified</span>`;
+            
+            return `
+            <div class="card" style="padding:14px 18px; border-left:3px solid ${b.is_winner ? '#10b981' : b.disqualified ? '#ef4444' : 'var(--border-color)'}">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+                    <div>
+                        <strong style="color:var(--text-primary); font-size:1.05rem;">${vendorDisp}</strong>
+                        ${statusBadge}
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">Submitted: ${b.submission_date ? b.submission_date.split('T')[0] : '-'} | By: ${escapeHtml(b.created_by_name)}</div>
+                    </div>
+                    ${canManage ? `
+                        <div style="display:flex; gap:6px;">
+                            ${isLeader && !b.is_winner && !b.disqualified ? `<button class="btn btn-sm" style="border:1px solid #10b981; color:#10b981; background:transparent;" onclick="markBidWinner(${b.id}, ${fileId})">Mark Winner</button>` : ''}
+                            <button class="btn-action" onclick='editBid(${JSON.stringify(b).replace(/'/g, "&#39;")})' title="Edit Bid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
+                            ${isLeader ? `<button class="btn-action" style="color:var(--danger)" onclick="deleteBid(${b.id}, ${fileId})" title="Delete Bid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+                <div style="display:flex; gap:24px; font-size:0.9rem; color:var(--text-secondary);">
+                    <div><span style="color:var(--text-muted); font-size:0.8rem; text-transform:uppercase;">Amount:</span> <strong>${amtStr}</strong></div>
+                    <div><span style="color:var(--text-muted); font-size:0.8rem; text-transform:uppercase;">Tech Score:</span> <strong>${techStr}</strong></div>
+                    <div><span style="color:var(--text-muted); font-size:0.8rem; text-transform:uppercase;">Fin Score:</span> <strong>${finStr}</strong></div>
+                </div>
+                ${b.disqualified && b.disqualification_reason ? `<div style="margin-top:8px; font-size:0.85rem; color:#ef4444;"><strong style="text-transform:uppercase; font-size:0.75rem;">Reason:</strong> ${escapeHtml(b.disqualification_reason)}</div>` : ''}
+                ${b.notes ? `<div style="margin-top:8px; font-size:0.85rem; color:var(--text-muted);"><strong style="text-transform:uppercase; font-size:0.75rem;">Notes:</strong> ${escapeHtml(b.notes)}</div>` : ''}
+            </div>
+            `;
+        }).join('');
+    } catch (err) {
+        container.innerHTML = `<div style="color:var(--danger);">Error loading bids: ${escapeHtml(err.message)}</div>`;
+    }
+}
+
+// Ensure the bid form toggles the disqualification reason field appropriately
+if ($('#inputBidDisqualified')) {
+    $('#inputBidDisqualified').addEventListener('change', (e) => {
+        $('#disqualReasonGroup').style.display = e.target.checked ? 'block' : 'none';
+        if (!e.target.checked) $('#inputBidDisqualReason').value = '';
+    });
+}
+
+function applyBidModalBasisOfSelection(file) {
+    const techGroup = $('#bidTechScoreGroup');
+    const finGroup = $('#bidFinScoreGroup');
+    const techInput = $('#inputBidTechScore');
+    const techHint = $('#hintBidTechScore');
+    const bos = file.basis_of_selection;
+
+    let showTech = false;
+    let reqTech = false;
+    let maxTech = 100;
+
+    if (bos === 'highest_combined_rating' || bos === 'lowest_price_per_point') {
+        showTech = true;
+        reqTech = true;
+        maxTech = file.maximum_technical_points || 100;
+    } else if (bos === 'lowest_price') {
+        if (file.minimum_points_threshold != null && parseFloat(file.minimum_points_threshold) > 0) {
+            showTech = true;
+            reqTech = true;
+            maxTech = file.maximum_technical_points || 100;
+        }
+    } else {
+        // Fallback for unconfigured files
+        showTech = true;
+    }
+
+    if (techGroup) techGroup.style.display = showTech ? 'block' : 'none';
+    if (techInput) {
+        techInput.required = reqTech;
+        techInput.max = maxTech;
+    }
+    if (techHint) techHint.textContent = `(0–${maxTech})`;
+
+    // Financial score is derived automatically in our new endpoints when BoS is set
+    if (finGroup) finGroup.style.display = bos ? 'none' : 'block';
+}
+
+window.openAddBid = async function(fileId) {
+    $('#formBid').reset();
+    $('#editBidId').value = '';
+    $('#bidFileId').value = fileId;
+    $('#modalBidTitle').textContent = 'Add Bid';
+    $('#disqualReasonGroup').style.display = 'none';
+    
+    // Apply Basis of Selection logic
+    try {
+        const file = await api(`/api/files/${fileId}`);
+        applyBidModalBasisOfSelection(file);
+    } catch (err) {
+        console.error('Failed to load file for bid modal', err);
+    }
+    
+    // Populate vendor dropdown
+    try {
+        const vendors = await api('/api/vendors?status=Active');
+        const sel = $('#inputBidVendor');
+        sel.innerHTML = '<option value="">— Select from registry —</option>' + 
+            vendors.map(v => `<option value="${v.id}">${escapeHtml(v.name)}</option>`).join('');
+    } catch (err) {
+        console.error('Failed to load active vendors', err);
+    }
+    
+    openModal('modalBid');
+};
+
+window.editBid = async function(b) {
+    $('#formBid').reset();
+    $('#editBidId').value = b.id;
+    $('#bidFileId').value = b.file_id;
+    $('#modalBidTitle').textContent = 'Edit Bid';
+    
+    // Apply Basis of Selection logic
+    try {
+        const file = await api(`/api/files/${b.file_id}`);
+        applyBidModalBasisOfSelection(file);
+    } catch (err) {
+        console.error('Failed to load file for bid modal', err);
+    }
+    
+    try {
+        const vendors = await api('/api/vendors');
+        const sel = $('#inputBidVendor');
+        sel.innerHTML = '<option value="">— Select from registry —</option>' + 
+            vendors.map(v => `<option value="${v.id}">${escapeHtml(v.name)} ${v.status !== 'Active' ? '(Inactive)' : ''}</option>`).join('');
+    } catch (err) {}
+    
+    $('#inputBidVendor').value = b.vendor_id || '';
+    $('#inputBidVendorFree').value = b.vendor_name_free || '';
+    $('#inputBidDate').value = b.submission_date ? b.submission_date.split('T')[0] : '';
+    $('#inputBidAmount').value = b.bid_amount || '';
+    $('#inputBidTechScore').value = b.technical_score || '';
+    $('#inputBidFinScore').value = b.financial_score || '';
+    $('#inputBidDisqualified').checked = b.disqualified;
+    $('#disqualReasonGroup').style.display = b.disqualified ? 'block' : 'none';
+    $('#inputBidDisqualReason').value = b.disqualification_reason || '';
+    $('#inputBidNotes').value = b.notes || '';
+    
+    openModal('modalBid');
+};
+
+if ($('#formBid')) {
+    $('#formBid').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const vendorId = $('#inputBidVendor').value;
+        const vendorFree = $('#inputBidVendorFree').value;
+        if (!vendorId && !vendorFree.trim()) {
+            showToast('Please select a registry vendor or type a free-text name', 'error');
+            return;
+        }
+        
+        const payload = {
+            file_id: $('#bidFileId').value,
+            vendor_id: vendorId || null,
+            vendor_name_free: vendorFree || null,
+            submission_date: $('#inputBidDate').value || null,
+            bid_amount: $('#inputBidAmount').value || null,
+            technical_score: $('#inputBidTechScore').value || null,
+            financial_score: $('#inputBidFinScore').value || null,
+            disqualified: $('#inputBidDisqualified').checked,
+            disqualification_reason: $('#inputBidDisqualReason').value || null,
+            notes: $('#inputBidNotes').value || null
+        };
+        
+        const bidId = $('#editBidId').value;
+        try {
+            if (bidId) {
+                await api(`/api/bids/${bidId}`, { method: 'PUT', body: JSON.stringify(payload) });
+                showToast('Bid updated');
+            } else {
+                await api('/api/bids', { method: 'POST', body: JSON.stringify(payload) });
+                showToast('Bid added');
+            }
+            closeModal('modalBid');
+            renderBidsForFile(payload.file_id, true);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.markBidWinner = async function(bidId, fileId) {
+    if (!confirm('Marking this bid as the winner will automatically set the contractor on the most recent contract segment for this file. Proceed?')) return;
+    try {
+        const res = await api(`/api/bids/${bidId}/winner`, { method: 'PUT', body: '{}' });
+        showToast('Winner set. Contract updated with contractor: ' + res.contractor_name);
+        renderBidsForFile(fileId, true);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+};
+
+window.deleteBid = async function(bidId, fileId) {
+    if (!confirm('Are you sure you want to delete this bid?')) return;
+    try {
+        await api(`/api/bids/${bidId}`, { method: 'DELETE' });
+        showToast('Bid deleted');
+        renderBidsForFile(fileId, true);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+};
+
+// ========================================
+// BASIS OF SELECTION & EVALUATION
+// ========================================
+
+window.openBasisOfSelection = async function(fileId) {
+    try {
+        const file = await api(`/api/files/${fileId}`);
+        $('#bosFileId').value = fileId;
+        
+        const methodSel = $('#inputBosMethod');
+        methodSel.value = file.basis_of_selection || '';
+        
+        $('#inputBosMinimumPoints').value = file.minimum_points_threshold || '';
+        $('#inputBosMaxPoints').value = file.maximum_technical_points || '';
+        $('#inputBosTechWeight').value = file.technical_weight_percent || '';
+        $('#inputBosPriceWeight').value = file.price_weight_percent || '';
+        
+        // trigger change event to show/hide fields
+        methodSel.dispatchEvent(new Event('change'));
+        
+        openModal('modalBasisOfSelection');
+    } catch (err) {
+        showToast('Failed to load file details: ' + err.message, 'error');
+    }
+};
+
+if ($('#inputBosMethod')) {
+    $('#inputBosMethod').addEventListener('change', (e) => {
+        const val = e.target.value;
+        const weightsGroup = $('#bosWeightsGroup');
+        const maxPointsGroup = $('#bosMaxPointsGroup');
+        
+        if (val === 'highest_combined_rating') {
+            weightsGroup.style.display = 'grid';
+            maxPointsGroup.style.display = 'block';
+            $('#inputBosMaxPoints').required = true;
+            $('#inputBosTechWeight').required = true;
+            $('#inputBosPriceWeight').required = true;
+        } else if (val === 'lowest_price_per_point') {
+            weightsGroup.style.display = 'none';
+            maxPointsGroup.style.display = 'none';
+            $('#inputBosMaxPoints').required = false;
+            $('#inputBosTechWeight').required = false;
+            $('#inputBosPriceWeight').required = false;
+        } else {
+            // lowest_price or empty
+            weightsGroup.style.display = 'none';
+            maxPointsGroup.style.display = 'none';
+            $('#inputBosMaxPoints').required = false;
+            $('#inputBosTechWeight').required = false;
+            $('#inputBosPriceWeight').required = false;
+        }
+    });
+}
+
+if ($('#formBasisOfSelection')) {
+    $('#formBasisOfSelection').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fileId = $('#bosFileId').value;
+        
+        const payload = {
+            basis_of_selection: $('#inputBosMethod').value || null,
+            minimum_points_threshold: $('#inputBosMinimumPoints').value || null,
+            maximum_technical_points: $('#inputBosMaxPoints').value || null,
+            technical_weight_percent: $('#inputBosTechWeight').value || null,
+            price_weight_percent: $('#inputBosPriceWeight').value || null
+        };
+        
+        try {
+            await api(`/api/files/${fileId}/basis-of-selection`, {
+                method: 'PUT',
+                body: JSON.stringify(payload)
+            });
+            showToast('Basis of Selection saved successfully');
+            closeModal();
+            viewFileDetail(fileId); // Reload UI
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.evaluateBids = async function(fileId) {
+    const container = $(`#evaluationResults_${fileId}`);
+    if (!container) return;
+    
+    container.style.display = 'block';
+    container.innerHTML = '<div style="color:var(--text-muted);">Evaluating bids...</div>';
+    
+    try {
+        const res = await api(`/api/bids/evaluate/${fileId}`);
+        
+        if (!res.recommended_winner) {
+            container.innerHTML = `
+                <div style="color:var(--warning);">
+                    <strong style="display:block; margin-bottom:4px;">Evaluation Incomplete</strong>
+                    ${res.all_bids && res.all_bids.length > 0 ? "No responsive bids could be evaluated based on the current criteria." : "There are no responsive bids to evaluate."}
+                </div>`;
+            return;
+        }
+        
+        const win = res.recommended_winner;
+        const vendorDisp = win.vendor_name ? escapeHtml(win.vendor_name) : (escapeHtml(win.vendor_name_free) || 'Unknown');
+        
+        let specificsHtml = '';
+        if (res.method === 'highest_combined_rating') {
+            specificsHtml = `
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Combined Score</span><br><strong style="color:var(--text-primary);">${win.combined_rating ? win.combined_rating.toFixed(2) : '0.00'} / 100</strong></div>
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Tech Score</span><br><span style="color:var(--text-primary);">${win.technical_score} / ${res.config.maximum_technical_points}</span> <span style="font-size:0.85rem;">(${win.tech_merit_score ? win.tech_merit_score.toFixed(2) : '0.00'}%)</span></div>
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Price Score</span><br><span style="color:var(--text-primary);">$${parseFloat(win.bid_amount).toLocaleString()}</span> <span style="font-size:0.85rem;">(${win.pricing_score ? win.pricing_score.toFixed(2) : '0.00'}%)</span></div>
+            `;
+        } else if (res.method === 'lowest_price_per_point') {
+            specificsHtml = `
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Price per Point</span><br><strong style="color:var(--text-primary);">$${win.metric ? win.metric.toLocaleString() : '0.00'}/pt</strong></div>
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Tech Score</span><br><span style="color:var(--text-primary);">${win.technical_score}</span></div>
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Amount</span><br><span style="color:var(--text-primary);">$${parseFloat(win.bid_amount).toLocaleString()}</span></div>
+            `;
+        } else {
+            // lowest_price
+            specificsHtml = `
+                <div><span style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;">Evaluated Amount</span><br><strong style="color:var(--text-primary);">$${parseFloat(win.bid_amount).toLocaleString()}</strong></div>
+            `;
+        }
+        
+        let autoWinHtml = '';
+        if (!win.is_winner && !res.tied && currentUser.role === 'team_leader') {
+            try {
+                await api(`/api/bids/${win.id}/winner`, { method: 'PUT', body: '{}' });
+                win.is_winner = true;
+                autoWinHtml = `<div style="color:#10b981; font-size:0.85rem; margin-top:8px; font-weight:600;">★ Automatically marked as winner</div>`;
+                renderBidsForFile(fileId, true);
+            } catch (err) {
+                console.error("Auto mark winner failed:", err);
+            }
+        }
+
+        container.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                    <strong style="color:var(--text-primary); font-size:1.1rem;">Recommended Winner: <span style="color:var(--accent);">${vendorDisp}</span></strong>
+                    <div style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">Based on <span style="text-transform:capitalize;">${(res.method || '').replace(/_/g, ' ')}</span></div>
+                    ${autoWinHtml}
+                </div>
+                ${!win.is_winner && currentUser.role === 'team_leader' ? `<button class="btn btn-sm btn-primary" onclick="markBidWinner(${win.id}, ${fileId})">Set as Winner</button>` : ''}
+            </div>
+            <div style="display:flex; gap:24px; margin-top:16px;">
+                ${specificsHtml}
+            </div>
+            ${res.tied ? `<div style="margin-top:12px; color:var(--warning); font-size:0.85rem;"><strong>Note:</strong> Multiple bids had the same evaluation result. Manual selection may be required.</div>` : ''}
+        `;
+        
+    } catch (err) {
+        container.innerHTML = `<div style="color:var(--danger);">Error evaluating bids: ${escapeHtml(err.message)}</div>`;
+    }
+};
+
+// ========================================
+// PRIORITY 2: POs & RECEIPTS & INVOICES
+// ========================================
+
+async function renderPOsForContract(contractId) {
+    const listDiv = $(`#poList_${contractId}`);
+    if (!listDiv) return;
+    try {
+        const pos = await api(`/api/purchase-orders?contract_id=${contractId}`);
+        if (!pos || pos.length === 0) {
+            listDiv.innerHTML = `<div style="font-size:0.85rem; color:var(--text-muted); padding:8px 0; font-style:italic;">No POs issued yet.</div>`;
+            return;
+        }
+        
+        const isLeader = currentUser.role === 'team_leader';
+        
+        let html = '<div style="display:flex; flex-direction:column; gap:16px;">';
+        for (const po of pos) {
+            const hasReceipts = parseInt(po.receipt_count) > 0;
+            const hasInvoices = parseInt(po.invoice_count) > 0;
+            
+            // Status coloring
+            let poStatusClr = 'var(--text-muted)';
+            if (po.status === 'Open') poStatusClr = 'var(--accent-light)';
+            if (po.status === 'Received') poStatusClr = '#f59e0b';
+            if (po.status === 'Closed') poStatusClr = '#10b981';
+            
+            html += `
+            <div class="card" style="border: 1px solid var(--border-color); box-shadow:none; padding:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; padding-bottom:12px; border-bottom:1px dashed var(--border-color);">
+                    <div>
+                        <div style="font-weight:600; font-size:1.05rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+                            ${escapeHtml(po.po_number)}
+                            <span class="badge" style="background:transparent; border:1px solid ${poStatusClr}; color:${poStatusClr}; font-weight:600;">${po.status}</span>
+                        </div>
+                        <div style="font-size:0.85rem; color:var(--text-secondary); margin-top:4px;">
+                            Date: ${po.po_date.split('T')[0]} &nbsp;|&nbsp; Amount: $${parseFloat(po.amount).toLocaleString()} &nbsp;|&nbsp; By: ${escapeHtml(po.created_by_name)}
+                        </div>
+                        ${po.description ? `<div style="font-size:0.85rem; color:var(--text-muted); margin-top:6px;">${escapeHtml(po.description)}</div>` : ''}
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                        <button class="btn btn-sm" style="background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color);" onclick='editPO(${JSON.stringify(po).replace(/'/g, "&#39;")})'>Edit PO</button>
+                    </div>
+                </div>
+                
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+                    <!-- Receipts Column -->
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="font-size:0.8rem; font-weight:600; text-transform:uppercase; color:var(--text-secondary);">Goods Receipts (${po.receipt_count})</span>
+                            <button class="btn-action" title="Add Receipt" onclick="openAddReceipt(${po.id}, ${contractId})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+                        </div>
+                        <div id="receiptList_${po.id}" style="font-size:0.85rem; color:var(--text-muted);">
+                            ${hasReceipts ? `<button class="btn-action" style="font-size:0.85rem; text-decoration:underline;" onclick="loadReceipts(${po.id})">View ${po.receipt_count} receipt(s)</button>` : 'No receipts yet.'}
+                        </div>
+                    </div>
+                    
+                    <!-- Invoices Column -->
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="font-size:0.8rem; font-weight:600; text-transform:uppercase; color:var(--text-secondary);">Invoices (${po.invoice_count})</span>
+                            <button class="btn-action" title="Add Invoice" onclick="openAddInvoice(${po.id}, ${contractId})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+                        </div>
+                        <div id="invoiceList_${po.id}" style="font-size:0.85rem; color:var(--text-muted);">
+                            ${hasInvoices ? `<button class="btn-action" style="font-size:0.85rem; text-decoration:underline;" onclick="loadInvoices(${po.id}, ${contractId}, ${isLeader})">View ${po.invoice_count} invoice(s)</button>` : 'No invoices yet.'}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+        html += '</div>';
+        listDiv.innerHTML = html;
+        
+    } catch (err) {
+        listDiv.innerHTML = `<div style="color:var(--danger); font-size:0.85rem;">Error loading POs: ${escapeHtml(err.message)}</div>`;
+    }
+}
+
+// PO actions
+window.openAddPO = function(contractId) {
+    $('#formPO').reset();
+    $('#editPOId').value = '';
+    $('#poContractId').value = contractId;
+    $('#modalPOTitle').textContent = 'Add Purchase Order';
+    openModal('modalPO');
+};
+
+window.editPO = function(po) {
+    $('#formPO').reset();
+    $('#editPOId').value = po.id;
+    $('#poContractId').value = po.contract_id;
+    $('#inputPONumber').value = po.po_number;
+    $('#inputPODate').value = po.po_date.split('T')[0];
+    $('#inputPOAmount').value = po.amount;
+    $('#inputPODescription').value = po.description || '';
+    $('#modalPOTitle').textContent = 'Edit Purchase Order';
+    openModal('modalPO');
+};
+
+if ($('#formPO')) {
+    $('#formPO').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = {
+            contract_id: $('#poContractId').value,
+            po_number: $('#inputPONumber').value,
+            po_date: $('#inputPODate').value,
+            amount: $('#inputPOAmount').value,
+            description: $('#inputPODescription').value || null
+        };
+        const poId = $('#editPOId').value;
+        try {
+            if (poId) await api(`/api/purchase-orders/${poId}`, { method: 'PUT', body: JSON.stringify(payload) });
+            else await api('/api/purchase-orders', { method: 'POST', body: JSON.stringify(payload) });
+            closeModal('modalPO');
+            showToast(poId ? 'PO updated' : 'PO created');
+            renderPOsForContract(payload.contract_id);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+// Receipts
+window.openAddReceipt = function(poId, contractId) {
+    $('#formReceipt').reset();
+    $('#receiptPOId').value = poId;
+    // stash contractId for refreshing
+    $('#formReceipt').dataset.contractId = contractId;
+    $('#inputReceiptDate').value = new Date().toISOString().split('T')[0];
+    openModal('modalReceipt');
+};
+
+if ($('#formReceipt')) {
+    $('#formReceipt').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const poId = $('#receiptPOId').value;
+        const payload = {
+            receipt_date: $('#inputReceiptDate').value,
+            received_quantity: $('#inputReceiptQty').value || null,
+            received_by_name: $('#inputReceiptBy').value || null,
+            notes: $('#inputReceiptNotes').value || null
+        };
+        try {
+            await api(`/api/purchase-orders/${poId}/receipts`, { method: 'POST', body: JSON.stringify(payload) });
+            closeModal('modalReceipt');
+            showToast('Receipt logged');
+            // Refresh the POs view to reflect new count and possibly new status "Received"
+            const contractId = $('#formReceipt').dataset.contractId;
+            if (contractId) renderPOsForContract(contractId);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.loadReceipts = async function(poId) {
+    const rDiv = $(`#receiptList_${poId}`);
+    rDiv.innerHTML = 'Loading...';
+    try {
+        const lists = await api(`/api/purchase-orders/${poId}/receipts`);
+        if (lists.length === 0) { rDiv.innerHTML = 'No receipts.'; return; }
+        rDiv.innerHTML = lists.map(r => `
+            <div style="background:rgba(255,255,255,0.03); border-radius:4px; padding:6px; margin-bottom:4px; border:1px solid var(--border-color);">
+                <strong>${r.receipt_date.split('T')[0]}</strong> &mdash; 
+                Qty: ${r.received_quantity || '-'} &mdash; By: ${escapeHtml(r.received_by_name || r.created_by_name)}
+                ${r.notes ? `<div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(r.notes)}</div>` : ''}
+            </div>
+        `).join('');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+};
+
+// Invoices
+window.openAddInvoice = function(poId, contractId) {
+    $('#formInvoice').reset();
+    $('#invoicePOId').value = poId;
+    $('#formInvoice').dataset.contractId = contractId; // stash for refresh
+    openModal('modalInvoice');
+};
+
+if ($('#formInvoice')) {
+    $('#formInvoice').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const poId = $('#invoicePOId').value;
+        const payload = {
+            invoice_number: $('#inputInvoiceNumber').value,
+            invoice_date: $('#inputInvoiceDate').value,
+            amount: $('#inputInvoiceAmount').value,
+            due_date: $('#inputInvoiceDue').value || null,
+            notes: $('#inputInvoiceNotes').value || null
+        };
+        try {
+            await api(`/api/purchase-orders/${poId}/invoices`, { method: 'POST', body: JSON.stringify(payload) });
+            closeModal('modalInvoice');
+            showToast('Invoice logged');
+            const contractId = $('#formInvoice').dataset.contractId;
+            if (contractId) renderPOsForContract(contractId);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    });
+}
+
+window.loadInvoices = async function(poId, contractId, isLeader) {
+    const rDiv = $(`#invoiceList_${poId}`);
+    rDiv.innerHTML = 'Loading...';
+    try {
+        const invoices = await api(`/api/purchase-orders/${poId}/invoices`);
+        if (invoices.length === 0) { rDiv.innerHTML = 'No invoices.'; return; }
+        rDiv.innerHTML = invoices.map(i => {
+            let clr = 'var(--text-muted)';
+            if (i.status === 'Approved') clr = '#f59e0b';
+            if (i.status === 'Paid') clr = '#10b981';
+            if (i.status === 'Rejected') clr = '#ef4444';
+            
+            const dropdownId = `invoiceStatus_${i.id}`;
+            const selectHtml = isLeader ? `
+                <select id="${dropdownId}" onchange="changeInvoiceStatus(${i.id}, this.value, ${poId}, ${contractId})" style="margin-left:auto; font-size:0.75rem; padding:2px 4px; background:var(--bg-primary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:3px;">
+                    <option value="Pending" ${i.status === 'Pending' ? 'selected' : ''}>Pending</option>
+                    <option value="Approved" ${i.status === 'Approved' ? 'selected' : ''}>Approved</option>
+                    <option value="Paid" ${i.status === 'Paid' ? 'selected' : ''}>Paid</option>
+                    <option value="Rejected" ${i.status === 'Rejected' ? 'selected' : ''}>Rejected</option>
+                </select>
+            ` : `<span style="margin-left:auto; font-size:0.75rem; font-weight:bold; color:${clr};">${i.status}</span>`;
+
+            return `
+            <div style="background:rgba(255,255,255,0.03); border-radius:4px; padding:6px; margin-bottom:4px; border:1px solid var(--border-color); display:flex; flex-direction:column; gap:4px;">
+                <div style="display:flex; align-items:center;">
+                    <strong>${escapeHtml(i.invoice_number)}</strong> &nbsp;|&nbsp; $${parseFloat(i.amount).toLocaleString()}
+                    ${selectHtml}
+                </div>
+                <div style="color:var(--text-secondary); font-size:0.75rem;">
+                    Date: ${i.invoice_date.split('T')[0]} ${i.due_date ? `&nbsp;|&nbsp; Due: ${i.due_date.split('T')[0]}` : ''}
+                </div>
+            </div>
+            `;
+        }).join('');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+};
+
+window.changeInvoiceStatus = async function(invoiceId, status, poId, contractId) {
+    try {
+        await api(`/api/invoices/${invoiceId}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
+        showToast('Invoice status updated');
+        // Refresh invoice list
+        const isLeader = currentUser.role === 'team_leader';
+        loadInvoices(poId, contractId, isLeader);
+    } catch (err) {
+        showToast(err.message, 'error');
+        // Re-load to reset select if failed
+        const isLeader = currentUser.role === 'team_leader';
+        loadInvoices(poId, contractId, isLeader);
+    }
+};
+
+// Ensure loading the vendors view triggers fetch
+// Ensure loading the vendors view triggers fetch
+const origLoadPage = window.loadPage;
+window.loadPage = function(page) {
+    if (page === 'vendors') loadVendors();
+    if (origLoadPage) origLoadPage(page);
+};
+
+// ===== Executive Reports Priority 3 =====
+async function loadReports() {
+    try {
+        const data = await api('/api/reports/dashboard');
+        if (!data) return;
+
+        // Populate Top Stats
+        $('#repTotalSpend').textContent = '$' + (data.totalSpend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        $('#repSlaCompliance').textContent = (data.slaCompliance || 0) + '%';
+        $('#repExpiringContracts').textContent = (data.expiringContracts ? data.expiringContracts.length : 0);
+
+        // Process Area Chart
+        const procChart = $('#repProcessChart');
+        procChart.innerHTML = '';
+        if (data.byProcess && data.byProcess.length > 0) {
+            const max = Math.max(...data.byProcess.map(p => parseInt(p.count)));
+            data.byProcess.forEach(p => {
+                const w = Math.max((parseInt(p.count) / max) * 100, 2);
+                procChart.insertAdjacentHTML('beforeend', `
+                    <div class="bar-row">
+                        <div class="bar-label">${escHtml(p.process_name.replace(/_/g, ' '))}</div>
+                        <div class="bar-track">
+                            <div class="bar-fill bg-success" style="width: ${w}%;"></div>
+                        </div>
+                        <div class="bar-value">${p.count}</div>
+                    </div>
+                `);
+            });
+        } else {
+            procChart.innerHTML = '<div class="empty-state">No files tracked yet</div>';
+        }
+
+        // Intake Trend Chart (Months)
+        const inChart = $('#repIntakeChart');
+        inChart.innerHTML = '';
+        if (data.intakeTrend && data.intakeTrend.length > 0) {
+            const maxReq = Math.max(...data.intakeTrend.map(i => parseInt(i.count)));
+            data.intakeTrend.forEach(i => {
+                const w = Math.max((parseInt(i.count) / maxReq) * 100, 2);
+                inChart.insertAdjacentHTML('beforeend', `
+                    <div class="bar-row">
+                        <div class="bar-label" style="width:80px;">${escHtml(i.month)}</div>
+                        <div class="bar-track">
+                            <div class="bar-fill" style="width: ${w}%; background-color: var(--primary);"></div>
+                        </div>
+                        <div class="bar-value">${i.count}</div>
+                    </div>
+                `);
+            });
+        } else {
+            inChart.innerHTML = '<div class="empty-state">No triage data available</div>';
+        }
+
+        // Vendors
+        const tbodyVendors = $('#repVendorsTable tbody');
+        tbodyVendors.innerHTML = '';
+        if (data.topVendors && data.topVendors.length > 0) {
+            data.topVendors.forEach(v => {
+                const val = parseFloat(v.total_value) || 0;
+                tbodyVendors.insertAdjacentHTML('beforeend', `
+                    <tr>
+                        <td>${escHtml(v.vendor_name)}</td>
+                        <td>${v.contract_count}</td>
+                        <td style="font-weight: 600;">$${val.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    </tr>
+                `);
+            });
+        } else {
+            tbodyVendors.innerHTML = '<tr><td colspan="3" class="text-center" style="color:var(--text-muted); padding:20px;">No contract awards yet</td></tr>';
+        }
+
+        // Expirations
+        const tbodyExp = $('#repExpiringTable tbody');
+        tbodyExp.innerHTML = '';
+        if (data.expiringContracts && data.expiringContracts.length > 0) {
+            data.expiringContracts.forEach(c => {
+                const dList = new Date(c.final_end_date).toLocaleDateString();
+                tbodyExp.insertAdjacentHTML('beforeend', `
+                    <tr>
+                        <td>
+                            <div>${escHtml(c.contract_number || 'N/A')}</div>
+                            <div style="font-size:0.8rem; color:var(--text-muted);">PR: ${escHtml(c.pr_number)}</div>
+                        </td>
+                        <td>${escHtml(c.contractor_name || 'N/A')}</td>
+                        <td style="color: var(--warning); font-weight: 600;">${dList}</td>
+                    </tr>
+                `);
+            });
+        } else {
+            tbodyExp.innerHTML = '<tr><td colspan="3" class="text-center" style="color:var(--text-muted); padding:20px;">No contracts expiring in the next 90 days</td></tr>';
+        }
+
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// Export SLA Performance Report
+$('#btnExportSLA')?.addEventListener('click', async () => {
+    try {
+        const btn = $('#btnExportSLA');
+        btn.disabled = true;
+        btn.innerHTML = '<div class="spinner"></div> Exporting...';
+        
+        const rawData = await api('/api/reports/sla');
+        if (!rawData || rawData.length === 0) {
+            showToast('No SLA data available to export', 'error');
+            btn.disabled = false;
+            btn.innerHTML = 'Export SLA Report';
+            return;
+        }
+
+        // Convert data logic to Excel
+        const wsData = [];
+        wsData.push(['Officer Name', 'Process Type', 'Step Name', 'PR Number', 'Started At', 'Completed At', 'SLA Target (Days)', 'SLA Met']);
+        
+        rawData.forEach(row => {
+            wsData.push([
+                row.officer_name,
+                row.process_name,
+                row.step_name,
+                row.pr_number,
+                row.started_at ? new Date(row.started_at).toLocaleString() : '',
+                row.completed_at ? new Date(row.completed_at).toLocaleString() : '',
+                row.sla_days,
+                row.sla_met ? 'Yes' : 'No'
+            ]);
+        });
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        
+        XLSX.utils.book_append_sheet(wb, ws, "SLA Performance");
+        XLSX.writeFile(wb, `SLA_Performance_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+        showToast('SLA Report downloaded successfully');
+
+        btn.disabled = false;
+        btn.innerHTML = 'Export SLA Report';
+    } catch (err) {
+        showToast(err.message, 'error');
+        $('#btnExportSLA').disabled = false;
+        $('#btnExportSLA').innerHTML = 'Export SLA Report';
+    }
+});

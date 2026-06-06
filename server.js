@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const cron = require('node-cron');
 const path = require('path');
+const cookieParser = require('cookie-parser');
 
 const pool = require('./db/pool');
 const { requireAuth, requireRole } = require('./middleware/auth');
@@ -13,13 +14,22 @@ const processesRouter = require('./routes/processes');
 const notificationsRouter = require('./routes/notifications');
 const triageRouter = require('./routes/triage');
 const { checkSLAs } = require('./services/slaChecker');
+const vendorsRouter = require('./routes/vendors');
+const bidsRouter = require('./routes/bids');
+const purchaseOrdersRouter = require('./routes/purchaseOrders');
+const reportsRouter = require('./routes/reports');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+const corsOptions = {
+    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
+    credentials: true // allow cookies
+};
+app.use(cors(corsOptions));
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Public routes (no auth required)
@@ -44,6 +54,14 @@ app.use('/api/files', requireAuth, requireRole('team_leader', 'officer'), filesR
 app.use('/api/processes', requireAuth, processesRouter);
 app.use('/api/notifications', requireAuth, requireRole('team_leader', 'officer'), notificationsRouter);
 app.use('/api/triage', requireAuth, requireRole('team_leader'), triageRouter);
+
+// Priority-2 routes
+app.use('/api/vendors', requireAuth, requireRole('team_leader', 'officer'), vendorsRouter);
+app.use('/api/bids', requireAuth, requireRole('team_leader', 'officer'), bidsRouter);
+app.use('/api/purchase-orders', requireAuth, requireRole('team_leader', 'officer'), purchaseOrdersRouter);
+
+// Priority-3 routes
+app.use('/api/reports', requireAuth, requireRole('team_leader', 'admin'), reportsRouter);
 
 // Manual SLA check trigger (team_leader only)
 app.post('/api/sla-check', requireAuth, requireRole('team_leader'), async (req, res) => {
@@ -78,7 +96,7 @@ async function start() {
             await pool.query('SELECT 1');
             console.log('✅ Database connected');
             break;
-        } catch (err) {
+        } catch (_err) {
             retries--;
             console.log(`⏳ Waiting for database... (${retries} retries left)`);
             await new Promise(r => setTimeout(r, 3000));
@@ -161,6 +179,110 @@ async function start() {
             ADD COLUMN IF NOT EXISTS number_of_options INTEGER,
             ADD COLUMN IF NOT EXISTS contractor_name VARCHAR(300);
         `);
+        // Priority-1 schema additions
+        await pool.query(`
+            ALTER TABLE files
+            ADD COLUMN IF NOT EXISTS estimated_value DECIMAL(15,2),
+            ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+            ADD COLUMN IF NOT EXISTS notes TEXT;
+        `);
+        await pool.query(`
+            ALTER TABLE triage_files
+            ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+            ADD COLUMN IF NOT EXISTS notes TEXT;
+        `);
+        // Priority-2 schema additions
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS vendors (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(300) NOT NULL UNIQUE,
+                registration_number VARCHAR(100),
+                contact_email VARCHAR(200),
+                contact_phone VARCHAR(50),
+                address TEXT,
+                category VARCHAR(100),
+                status VARCHAR(20) DEFAULT 'Active' CHECK (status IN ('Active','Blacklisted','Inactive')),
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS bids (
+                id SERIAL PRIMARY KEY,
+                file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+                vendor_id INTEGER REFERENCES vendors(id) ON DELETE SET NULL,
+                vendor_name_free TEXT,
+                submission_date DATE,
+                bid_amount DECIMAL(15,2),
+                technical_score DECIMAL(5,2),
+                financial_score DECIMAL(5,2),
+                disqualified BOOLEAN DEFAULT FALSE,
+                disqualification_reason TEXT,
+                is_winner BOOLEAN DEFAULT FALSE,
+                notes TEXT,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS purchase_orders (
+                id SERIAL PRIMARY KEY,
+                contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+                po_number VARCHAR(100) NOT NULL UNIQUE,
+                po_date DATE NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                description TEXT,
+                status VARCHAR(30) DEFAULT 'Open' CHECK (status IN ('Open','Received','Closed','Cancelled')),
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS goods_receipts (
+                id SERIAL PRIMARY KEY,
+                po_id INTEGER REFERENCES purchase_orders(id) ON DELETE CASCADE,
+                receipt_date DATE NOT NULL,
+                received_quantity DECIMAL(10,2),
+                received_by_name VARCHAR(200),
+                notes TEXT,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS invoices (
+                id SERIAL PRIMARY KEY,
+                contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+                po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL,
+                invoice_number VARCHAR(100) NOT NULL,
+                invoice_date DATE NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                status VARCHAR(30) DEFAULT 'Pending' CHECK (status IN ('Pending','Approved','Rejected','Paid')),
+                due_date DATE,
+                paid_date DATE,
+                notes TEXT,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        // Priority-3 migrations
+        await pool.query(`
+            ALTER TABLE notifications ALTER COLUMN step_id DROP NOT NULL;
+        `);
+        // Priority-4 migrations
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                action VARCHAR(100) NOT NULL,
+                entity_type VARCHAR(50),
+                entity_id INTEGER,
+                old_value JSONB,
+                new_value JSONB,
+                ip_address VARCHAR(45),
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
         console.log('✅ Migrations applied');
     } catch (err) {
         console.error('⚠️ Migration warning:', err.message);
@@ -173,19 +295,20 @@ async function start() {
             "SELECT id, password_hash FROM users WHERE email = $1 AND role = 'admin'",
             ['admin@filetracker.local']
         );
+        const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
         if (existing.rows.length === 0) {
-            const hash = await bcrypt.hash('admin123', 10);
+            const hash = await bcrypt.hash(defaultPassword, 10);
             await pool.query(
                 "INSERT INTO users (email, password_hash, display_name, role) VALUES ($1, $2, $3, 'admin')",
                 ['admin@filetracker.local', hash, 'App Administrator']
             );
-            console.log('✅ Default admin created (admin@filetracker.local / admin123)');
+            console.log('✅ Default admin created (admin@filetracker.local)');
         } else {
             // Verify hash is valid bcrypt, re-hash if not
             const row = existing.rows[0];
             const isValid = row.password_hash && row.password_hash.startsWith('$2');
             if (!isValid) {
-                const hash = await bcrypt.hash('admin123', 10);
+                const hash = await bcrypt.hash(defaultPassword, 10);
                 await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, row.id]);
                 console.log('✅ Admin password hash refreshed');
             } else {
@@ -195,6 +318,14 @@ async function start() {
     } catch (err) {
         console.error('⚠️ Admin seed warning:', err.message);
     }
+
+    // Global error handler — must be defined after all routes
+     
+    app.use((err, req, res, next) => {
+        console.error('[Unhandled Error]', err.message);
+        const status = err.status || err.statusCode || 500;
+        res.status(status).json({ error: err.message || 'Internal server error' });
+    });
 
     app.listen(PORT, () => {
         console.log(`🚀 Server running on http://localhost:${PORT}`);

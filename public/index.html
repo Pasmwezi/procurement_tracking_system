@@ -103,6 +103,14 @@
                 <span>Contracts</span>
             </li>
 
+            <li class="nav-item" data-page="vendors" data-roles="team_leader officer">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                    <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                </svg>
+                <span>Vendors</span>
+            </li>
+
             <li class="nav-item" data-page="officers" data-roles="team_leader">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
@@ -111,6 +119,14 @@
                     <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                 </svg>
                 <span>Officers</span>
+            </li>
+            <li class="nav-item" data-page="reports" data-roles="team_leader admin">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="20" x2="18" y2="10"></line>
+                    <line x1="12" y1="20" x2="12" y2="4"></line>
+                    <line x1="6" y1="20" x2="6" y2="14"></line>
+                </svg>
+                <span>Reports</span>
             </li>
             <li class="nav-item" data-page="notifications" data-roles="team_leader officer">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -206,6 +222,113 @@
                 </div>
             </div>
         </header>
+
+        <!-- Reports Page -->
+        <section class="page" id="pageReports">
+            <div class="page-actions" style="justify-content: space-between; margin-bottom: 24px;">
+                <h2 style="margin: 0;">Executive Dashboard</h2>
+                <button class="btn btn-secondary" id="btnExportSLA">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Export SLA Report
+                </button>
+            </div>
+
+            <div class="stats-grid" id="reportsStatsGrid">
+                <div class="stat-card stat-total">
+                    <div class="stat-icon" style="color: #009ef7; background: rgba(0,158,247,0.15);">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="1" x2="12" y2="23"></line>
+                            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                        </svg>
+                    </div>
+                    <div class="stat-value-wrap">
+                        <span class="stat-value" id="repTotalSpend">$0</span>
+                        <span class="stat-label">Total Committed Spend</span>
+                    </div>
+                </div>
+                <div class="stat-card stat-active">
+                    <div class="stat-icon" style="color: #50cd89; background: rgba(80,205,137,0.15);">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                    </div>
+                    <div class="stat-value-wrap">
+                        <span class="stat-value" id="repSlaCompliance">0%</span>
+                        <span class="stat-label">SLA Compliance Rate</span>
+                    </div>
+                </div>
+                <div class="stat-card stat-overdue">
+                    <div class="stat-icon" style="color: #ffc700; background: rgba(255,199,0,0.15);">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                            <polyline points="10 9 9 9 8 9"></polyline>
+                        </svg>
+                    </div>
+                    <div class="stat-value-wrap">
+                        <span class="stat-value" id="repExpiringContracts">0</span>
+                        <span class="stat-label">Contracts Expiring (90 days)</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h2>Files by Process Type</h2>
+                    </div>
+                    <div class="bar-chart" id="repProcessChart"></div>
+                </div>
+                
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h2>Monthly Intake Trend</h2>
+                    </div>
+                    <div class="bar-chart" id="repIntakeChart"></div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-card" style="flex:1;">
+                    <div class="chart-header">
+                        <h2>Top Vendors by Contract Value</h2>
+                    </div>
+                    <table class="data-table" id="repVendorsTable">
+                        <thead>
+                            <tr>
+                                <th>Vendor Name</th>
+                                <th>Contracts</th>
+                                <th>Total Value</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <div class="chart-card" style="flex:1;">
+                    <div class="chart-header">
+                        <h2>Expiring Contracts</h2>
+                    </div>
+                    <table class="data-table" id="repExpiringTable">
+                        <thead>
+                            <tr>
+                                <th>Contract No / PR</th>
+                                <th>Contractor</th>
+                                <th>End Date</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
 
         <!-- Dashboard Page -->
         <section class="page active" id="pageDashboard">
@@ -315,6 +438,7 @@
         <section class="page" id="pageFiles">
             <div class="page-actions">
                 <div class="filter-bar">
+                    <input type="text" id="searchFiles" class="select-input" placeholder="🔍 Search PR# or title..." style="min-width:200px;">
                     <select id="filterOfficer" class="select-input">
                         <option value="team_me" data-roles="team_leader">My Team</option>
                         <option value="">All Officers</option>
@@ -329,6 +453,14 @@
                     </select>
                 </div>
                 <div style="display:flex;gap:10px;">
+                    <button class="btn btn-secondary" id="btnExportFiles" data-roles="team_leader" title="Export current view to Excel">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Export Excel
+                    </button>
                     <button class="btn btn-secondary" id="btnImportFiles" data-roles="team_leader">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -409,6 +541,7 @@
         <section class="page" id="pageTriage">
             <div class="page-actions">
                 <div class="filter-bar">
+                    <input type="text" id="searchTriage" class="select-input" placeholder="🔍 Search PR# or title..." style="min-width:200px;">
                     <select id="filterTriageStatus" class="select-input">
                         <option value="">All Statuses</option>
                         <option value="Triaged">Triaged</option>
@@ -419,6 +552,14 @@
                     </select>
                 </div>
                 <div style="display:flex;gap:10px;">
+                    <button class="btn btn-secondary" id="btnExportTriage" title="Export current view to Excel">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Export Excel
+                    </button>
                     <button class="btn btn-secondary" id="btnImportTriage">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -484,6 +625,50 @@
                         <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
                     </svg>
                     <p>No triage files. Create your first triage entry to begin intake.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Vendors Page -->
+        <section class="page" id="pageVendors">
+            <div class="page-actions">
+                <input type="text" id="searchVendors" class="select-input" placeholder="🔍 Search vendors..." style="min-width:220px;">
+                <div style="display:flex;gap:10px;">
+                    <select id="filterVendorStatus" class="select-input">
+                        <option value="">All Statuses</option>
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                        <option value="Blacklisted">Blacklisted</option>
+                    </select>
+                    <button class="btn btn-primary" id="btnNewVendor" data-roles="team_leader">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        New Vendor
+                    </button>
+                </div>
+            </div>
+            <div class="files-table-wrap">
+                <table class="data-table" id="vendorsTable">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Category</th>
+                            <th>Registration #</th>
+                            <th>Contact Email</th>
+                            <th>Phone</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="vendorsBody"></tbody>
+                </table>
+                <div class="empty-state" id="vendorsEmpty" style="display:none;">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                    </svg>
+                    <p>No vendors yet. Add your first vendor.</p>
                 </div>
             </div>
         </section>
@@ -580,6 +765,16 @@
                                 <polyline points="22,6 12,13 2,6"></polyline>
                             </svg>
                             Email Settings
+                        </button>
+                        <button class="admin-tab" data-admin-tab="audit">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                                <line x1="16" y1="13" x2="8" y2="13"></line>
+                                <line x1="16" y1="17" x2="8" y2="17"></line>
+                                <polyline points="10 9 9 9 8 9"></polyline>
+                            </svg>
+                            Audit Logs
                         </button>
                     </div>
                 </div>
@@ -817,6 +1012,55 @@
                             </form>
                         </div>
                     </div>
+
+                    <!-- Audit Logs Tab -->
+                    <div class="admin-tab-content" id="adminTabAudit">
+                        <div class="admin-section-header">
+                            <div class="admin-section-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                                    <polyline points="10 9 9 9 8 9"></polyline>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3>Audit Logs</h3>
+                                <p class="admin-section-desc">View system activity and security events.</p>
+                            </div>
+                        </div>
+                        <div class="page-actions">
+                            <div class="filter-bar">
+                                <button class="btn btn-secondary" id="btnRefreshAudit">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="23 4 23 10 17 10"></polyline>
+                                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                                    </svg>
+                                    Refresh
+                                </button>
+                            </div>
+                            <div class="pagination-controls" id="auditPagination" style="display:flex;align-items:center;gap:10px;">
+                                <button class="btn btn-secondary" id="btnAuditPrev" disabled>&laquo; Prev</button>
+                                <span id="auditPageInfo">Page 1</span>
+                                <button class="btn btn-secondary" id="btnAuditNext" disabled>Next &raquo;</button>
+                            </div>
+                        </div>
+                        <div class="files-table-wrap">
+                            <table class="data-table" id="auditTable">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>User</th>
+                                        <th>Action</th>
+                                        <th>Entity Details</th>
+                                        <th>IP Address</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="auditBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -860,6 +1104,10 @@
                         <option value="">Step 1 (start from beginning)</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label for="inputEstimatedValue">Estimated Value <span class="form-hint">(optional)</span></label>
+                    <input type="number" id="inputEstimatedValue" class="text-input" step="0.01" min="0" placeholder="e.g. 50000.00">
+                </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-close>Cancel</button>
                     <button type="submit" class="btn btn-primary">Create File</button>
@@ -897,6 +1145,261 @@
                 <button class="btn-close" data-close>&times;</button>
             </div>
             <div class="modal-body" id="detailBody"></div>
+        </div>
+
+        <!-- New/Edit Vendor Modal -->
+        <div class="modal" id="modalVendor" style="display:none;">
+            <div class="modal-header">
+                <h2 id="modalVendorTitle">Add Vendor</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formVendor" class="modal-body">
+                <input type="hidden" id="editVendorId">
+                <div class="form-group">
+                    <label for="inputVendorName">Vendor Name *</label>
+                    <input type="text" id="inputVendorName" class="text-input" required placeholder="e.g. Acme Corp">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                    <div class="form-group">
+                        <label for="inputVendorCategory">Category</label>
+                        <input type="text" id="inputVendorCategory" class="text-input" placeholder="e.g. IT, Construction">
+                    </div>
+                    <div class="form-group">
+                        <label for="inputVendorReg">Registration #</label>
+                        <input type="text" id="inputVendorReg" class="text-input" placeholder="Business number">
+                    </div>
+                    <div class="form-group">
+                        <label for="inputVendorEmail">Contact Email</label>
+                        <input type="email" id="inputVendorEmail" class="text-input" placeholder="vendor@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="inputVendorPhone">Phone</label>
+                        <input type="tel" id="inputVendorPhone" class="text-input" placeholder="e.g. 613-555-0100">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="inputVendorAddress">Address</label>
+                    <textarea id="inputVendorAddress" class="comment-input" rows="2" placeholder="Full mailing address"></textarea>
+                </div>
+                <div class="form-group" id="vendorStatusGroup" style="display:none;">
+                    <label for="inputVendorStatus">Status</label>
+                    <select id="inputVendorStatus" class="select-input">
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                        <option value="Blacklisted">Blacklisted</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="inputVendorNotes">Notes</label>
+                    <textarea id="inputVendorNotes" class="comment-input" rows="2" placeholder="Internal notes about this vendor"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="btnSubmitVendor">Save Vendor</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Bid Entry Modal -->
+        <div class="modal" id="modalBid" style="display:none;">
+            <div class="modal-header">
+                <h2 id="modalBidTitle">Add Bid</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formBid" class="modal-body">
+                <input type="hidden" id="editBidId">
+                <input type="hidden" id="bidFileId">
+                <div class="form-group">
+                    <label for="inputBidVendor">Vendor (Registry)</label>
+                    <select id="inputBidVendor" class="select-input">
+                        <option value="">— Select from registry —</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="inputBidVendorFree">— OR — Vendor Name (free text)</label>
+                    <input type="text" id="inputBidVendorFree" class="text-input" placeholder="e.g. New Vendor Inc.">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                    <div class="form-group">
+                        <label for="inputBidDate">Submission Date</label>
+                        <input type="date" id="inputBidDate" class="text-input">
+                    </div>
+                    <div class="form-group">
+                        <label for="inputBidAmount">Bid Amount</label>
+                        <input type="number" id="inputBidAmount" class="text-input" step="0.01" min="0" placeholder="0.00">
+                    </div>
+                    <div class="form-group" id="bidTechScoreGroup">
+                        <label for="inputBidTechScore" id="labelBidTechScore">Technical Score <span class="form-hint" id="hintBidTechScore">(0–100)</span></label>
+                        <input type="number" id="inputBidTechScore" class="text-input" step="0.01" min="0" max="100" placeholder="e.g. 85">
+                    </div>
+                    <div class="form-group" id="bidFinScoreGroup">
+                        <label for="inputBidFinScore">Financial Score <span class="form-hint">(0–100)</span></label>
+                        <input type="number" id="inputBidFinScore" class="text-input" step="0.01" min="0" max="100" placeholder="e.g. 90">
+                    </div>
+                </div>
+                <div class="form-group" style="display:flex;align-items:center;gap:12px;">
+                    <label style="margin:0;"><input type="checkbox" id="inputBidDisqualified"> Disqualified</label>
+                </div>
+                <div class="form-group" id="disqualReasonGroup" style="display:none;">
+                    <label for="inputBidDisqualReason">Disqualification Reason</label>
+                    <input type="text" id="inputBidDisqualReason" class="text-input" placeholder="Reason for disqualification">
+                </div>
+                <div class="form-group">
+                    <label for="inputBidNotes">Notes</label>
+                    <textarea id="inputBidNotes" class="comment-input" rows="2" placeholder="Additional notes"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Bid</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Basis of Selection Configuration Modal -->
+        <div class="modal" id="modalBasisOfSelection" style="display:none;">
+            <div class="modal-header">
+                <h2>Configure Basis of Selection</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formBasisOfSelection" class="modal-body">
+                <input type="hidden" id="bosFileId">
+                <div class="form-group">
+                    <label for="inputBosMethod">Evaluation Method *</label>
+                    <select id="inputBosMethod" class="select-input" required>
+                        <option value="">— Select a method —</option>
+                        <option value="lowest_price">Lowest Price</option>
+                        <option value="lowest_price_per_point">Lowest Price Per Point</option>
+                        <option value="highest_combined_rating">Highest Combined Rating</option>
+                    </select>
+                </div>
+                <div class="form-group" id="bosThresholdGroup">
+                    <label for="inputBosMinimumPoints">Minimum Technical Points Threshold <span class="form-hint">(optional)</span></label>
+                    <input type="number" id="inputBosMinimumPoints" class="text-input" step="0.01" min="0" placeholder="e.g. 70">
+                    <span class="form-hint">Bids scoring below this will be considered non-responsive.</span>
+                </div>
+                <div class="form-group" id="bosMaxPointsGroup" style="display:none;">
+                    <label for="inputBosMaxPoints">Maximum Technical Points Available *</label>
+                    <input type="number" id="inputBosMaxPoints" class="text-input" step="1" min="1" placeholder="e.g. 100">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;display:none;" id="bosWeightsGroup">
+                    <div class="form-group">
+                        <label for="inputBosTechWeight">Technical Weight (%) *</label>
+                        <input type="number" id="inputBosTechWeight" class="text-input" step="1" min="0" max="100" placeholder="e.g. 70">
+                    </div>
+                    <div class="form-group">
+                        <label for="inputBosPriceWeight">Price Weight (%) *</label>
+                        <input type="number" id="inputBosPriceWeight" class="text-input" step="1" min="0" max="100" placeholder="e.g. 30">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Configuration</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- PO Entry Modal -->
+        <div class="modal" id="modalPO" style="display:none;">
+            <div class="modal-header">
+                <h2 id="modalPOTitle">Add Purchase Order</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formPO" class="modal-body">
+                <input type="hidden" id="poContractId">
+                <input type="hidden" id="editPOId">
+                <div class="form-group">
+                    <label for="inputPONumber">PO Number *</label>
+                    <input type="text" id="inputPONumber" class="text-input" required placeholder="e.g. PO-2026-001">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                    <div class="form-group">
+                        <label for="inputPODate">PO Date *</label>
+                        <input type="date" id="inputPODate" class="text-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="inputPOAmount">Amount *</label>
+                        <input type="number" id="inputPOAmount" class="text-input" step="0.01" min="0" required placeholder="0.00">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="inputPODescription">Description</label>
+                    <textarea id="inputPODescription" class="comment-input" rows="2" placeholder="Describe goods/services ordered"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save PO</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Receipt Entry Modal -->
+        <div class="modal" id="modalReceipt" style="display:none;">
+            <div class="modal-header">
+                <h2>Add Goods Receipt</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formReceipt" class="modal-body">
+                <input type="hidden" id="receiptPOId">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                    <div class="form-group">
+                        <label for="inputReceiptDate">Receipt Date *</label>
+                        <input type="date" id="inputReceiptDate" class="text-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="inputReceiptQty">Quantity Received</label>
+                        <input type="number" id="inputReceiptQty" class="text-input" step="0.01" min="0" placeholder="e.g. 10">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="inputReceiptBy">Received By</label>
+                    <input type="text" id="inputReceiptBy" class="text-input" placeholder="Name of person who received goods">
+                </div>
+                <div class="form-group">
+                    <label for="inputReceiptNotes">Notes</label>
+                    <textarea id="inputReceiptNotes" class="comment-input" rows="2" placeholder="Condition, partial delivery, etc."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Receipt</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Invoice Entry Modal -->
+        <div class="modal" id="modalInvoice" style="display:none;">
+            <div class="modal-header">
+                <h2>Add Invoice</h2>
+                <button class="btn-close" data-close>&times;</button>
+            </div>
+            <form id="formInvoice" class="modal-body">
+                <input type="hidden" id="invoicePOId">
+                <div class="form-group">
+                    <label for="inputInvoiceNumber">Invoice Number *</label>
+                    <input type="text" id="inputInvoiceNumber" class="text-input" required placeholder="e.g. INV-2026-001">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                    <div class="form-group">
+                        <label for="inputInvoiceDate">Invoice Date *</label>
+                        <input type="date" id="inputInvoiceDate" class="text-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="inputInvoiceAmount">Amount *</label>
+                        <input type="number" id="inputInvoiceAmount" class="text-input" step="0.01" min="0" required placeholder="0.00">
+                    </div>
+                    <div class="form-group">
+                        <label for="inputInvoiceDue">Due Date</label>
+                        <input type="date" id="inputInvoiceDue" class="text-input">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="inputInvoiceNotes">Notes</label>
+                    <textarea id="inputInvoiceNotes" class="comment-input" rows="2" placeholder="Additional notes"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close>Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Invoice</button>
+                </div>
+            </form>
         </div>
 
         <!-- Change Password Modal -->
@@ -951,6 +1454,7 @@
                         <option value="">Select role...</option>
                         <option value="team_leader">Team Leader</option>
                         <option value="officer">Officer</option>
+                        <option value="admin">Admin</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -1303,7 +1807,7 @@
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="/js/app.js?v=3.0"></script>
+    <script src="/js/app.js?v=5.0"></script>
 </body>
 
 </html>
