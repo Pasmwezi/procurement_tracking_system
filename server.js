@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const cron = require('node-cron');
 const path = require('path');
-const cookieParser = require('cookie-parser');
 
 const pool = require('./db/pool');
 const { requireAuth, requireRole } = require('./middleware/auth');
@@ -17,19 +16,13 @@ const { checkSLAs } = require('./services/slaChecker');
 const vendorsRouter = require('./routes/vendors');
 const bidsRouter = require('./routes/bids');
 const purchaseOrdersRouter = require('./routes/purchaseOrders');
-const reportsRouter = require('./routes/reports');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-const corsOptions = {
-    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
-    credentials: true // allow cookies
-};
-app.use(cors(corsOptions));
+app.use(cors());
 app.use(express.json());
-app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Public routes (no auth required)
@@ -59,9 +52,6 @@ app.use('/api/triage', requireAuth, requireRole('team_leader'), triageRouter);
 app.use('/api/vendors', requireAuth, requireRole('team_leader', 'officer'), vendorsRouter);
 app.use('/api/bids', requireAuth, requireRole('team_leader', 'officer'), bidsRouter);
 app.use('/api/purchase-orders', requireAuth, requireRole('team_leader', 'officer'), purchaseOrdersRouter);
-
-// Priority-3 routes
-app.use('/api/reports', requireAuth, requireRole('team_leader', 'admin'), reportsRouter);
 
 // Manual SLA check trigger (team_leader only)
 app.post('/api/sla-check', requireAuth, requireRole('team_leader'), async (req, res) => {
@@ -96,7 +86,7 @@ async function start() {
             await pool.query('SELECT 1');
             console.log('✅ Database connected');
             break;
-        } catch (_err) {
+        } catch (err) {
             retries--;
             console.log(`⏳ Waiting for database... (${retries} retries left)`);
             await new Promise(r => setTimeout(r, 3000));
@@ -265,24 +255,6 @@ async function start() {
                 created_at TIMESTAMP DEFAULT NOW()
             )
         `);
-        // Priority-3 migrations
-        await pool.query(`
-            ALTER TABLE notifications ALTER COLUMN step_id DROP NOT NULL;
-        `);
-        // Priority-4 migrations
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                action VARCHAR(100) NOT NULL,
-                entity_type VARCHAR(50),
-                entity_id INTEGER,
-                old_value JSONB,
-                new_value JSONB,
-                ip_address VARCHAR(45),
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        `);
         console.log('✅ Migrations applied');
     } catch (err) {
         console.error('⚠️ Migration warning:', err.message);
@@ -295,20 +267,19 @@ async function start() {
             "SELECT id, password_hash FROM users WHERE email = $1 AND role = 'admin'",
             ['admin@filetracker.local']
         );
-        const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
         if (existing.rows.length === 0) {
-            const hash = await bcrypt.hash(defaultPassword, 10);
+            const hash = await bcrypt.hash('admin123', 10);
             await pool.query(
                 "INSERT INTO users (email, password_hash, display_name, role) VALUES ($1, $2, $3, 'admin')",
                 ['admin@filetracker.local', hash, 'App Administrator']
             );
-            console.log('✅ Default admin created (admin@filetracker.local)');
+            console.log('✅ Default admin created (admin@filetracker.local / admin123)');
         } else {
             // Verify hash is valid bcrypt, re-hash if not
             const row = existing.rows[0];
             const isValid = row.password_hash && row.password_hash.startsWith('$2');
             if (!isValid) {
-                const hash = await bcrypt.hash(defaultPassword, 10);
+                const hash = await bcrypt.hash('admin123', 10);
                 await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, row.id]);
                 console.log('✅ Admin password hash refreshed');
             } else {
@@ -319,16 +290,8 @@ async function start() {
         console.error('⚠️ Admin seed warning:', err.message);
     }
 
-    // Global error handler — must be defined after all routes
-     
-    app.use((err, req, res, next) => {
-        console.error('[Unhandled Error]', err.message);
-        const status = err.status || err.statusCode || 500;
-        res.status(status).json({ error: err.message || 'Internal server error' });
-    });
-
-    app.listen(PORT, () => {
-        console.log(`🚀 Server running on http://localhost:${PORT}`);
+    app.listen(PORT,'0.0.0.0', () => {
+        console.log(`🚀 Server running on port ${PORT}`);
     });
 }
 
