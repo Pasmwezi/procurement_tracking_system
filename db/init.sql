@@ -179,3 +179,17 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value TEXT,
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Immutable operational audit trail
+CREATE TABLE IF NOT EXISTS audit_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    action VARCHAR(100) NOT NULL,
+    entity_type VARCHAR(100) NOT NULL,
+    entity_id INTEGER,
+    old_value JSONB,
+    new_value JSONB,
+    ip_address VARCHAR(100),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at DESC);

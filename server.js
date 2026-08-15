@@ -86,7 +86,7 @@ async function start() {
             await pool.query('SELECT 1');
             console.log('✅ Database connected');
             break;
-        } catch (err) {
+        } catch (_err) {
             retries--;
             console.log(`⏳ Waiting for database... (${retries} retries left)`);
             await new Promise(r => setTimeout(r, 3000));
@@ -106,6 +106,23 @@ async function start() {
                 value TEXT,
                 updated_at TIMESTAMP DEFAULT NOW()
             )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                action VARCHAR(100) NOT NULL,
+                entity_type VARCHAR(100) NOT NULL,
+                entity_id INTEGER,
+                old_value JSONB,
+                new_value JSONB,
+                ip_address VARCHAR(100),
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_audit_log_created_at
+            ON audit_log(created_at DESC)
         `);
 
         // Triage tables

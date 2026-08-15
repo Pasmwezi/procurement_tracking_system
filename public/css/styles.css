@@ -72,6 +72,12 @@
     --grad-warning: linear-gradient(135deg, #b45309 0%, #f59e0b 100%);
 }
 
+/* Fail closed: protected application UI is absent until authentication succeeds. */
+body:not(.authenticated) .sidebar,
+body:not(.authenticated) .main-content {
+    display: none;
+}
+
 /* ==============================================
    Reset & Base
    ============================================== */
@@ -4807,4 +4813,4 @@ body::before {
         display: none;
     }
 }
-
+

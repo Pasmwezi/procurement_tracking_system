@@ -440,7 +440,14 @@ router.put('/:id/advance', [
         if (file.status === 'Completed') throw new Error('File is already completed');
 
         const nextStep = await client.query(
-            'SELECT * FROM process_steps WHERE process_name = $1 AND step_order = $2',
+            `SELECT ps.*,
+                    NOT EXISTS (
+                        SELECT 1 FROM process_steps later
+                        WHERE later.process_name = ps.process_name
+                          AND later.step_order > ps.step_order
+                    ) AS is_terminal
+             FROM process_steps ps
+             WHERE ps.process_name = $1 AND ps.step_order = $2`,
             [file.process_name, file.step_order + 1]
         );
 
@@ -457,7 +464,7 @@ router.put('/:id/advance', [
             [now, req.params.id, file.current_step_id, comment || null]
         );
 
-        const isCompleted = next.step_name === 'Completed';
+        const isCompleted = next.is_terminal;
 
         await client.query(
             `UPDATE files SET current_step_id = $1, step_started_at = $2,

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
+const { executeFileTransfers } = require('../services/fileTransfers');
 
 // GET /api/officers — list officers (users with role='officer')
 // Team Leaders see all officers (can assign cross-team)
@@ -28,6 +29,34 @@ router.get('/', async (req, res) => {
             params
         );
         res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/officers/:id/transfer-candidates — complete active-file list
+router.get('/:id/transfer-candidates', async (req, res) => {
+    if (req.user.role !== 'team_leader') {
+        return res.status(403).json({ error: 'Only team leaders can transfer files' });
+    }
+    const officerId = Number(req.params.id);
+    if (!Number.isInteger(officerId) || officerId <= 0) {
+        return res.status(400).json({ error: 'Officer ID must be a positive integer' });
+    }
+    try {
+        const officer = await pool.query(
+            "SELECT id FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE",
+            [officerId]
+        );
+        if (officer.rowCount === 0) return res.status(404).json({ error: 'Active officer not found' });
+        const files = await pool.query(
+            `SELECT id, pr_number, title, process_name, status
+             FROM files
+             WHERE officer_id = $1 AND status = 'Active'
+             ORDER BY created_at DESC, id DESC`,
+            [officerId]
+        );
+        res.json(files.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -81,63 +110,30 @@ router.put('/:id/transfer', async (req, res) => {
         return res.status(403).json({ error: 'Only team leaders can transfer files' });
     }
 
-    const fromId = parseInt(req.params.id);
-    const { transfers } = req.body;
-
-    if (!transfers || !Array.isArray(transfers) || transfers.length === 0) {
-        return res.status(400).json({ error: 'At least one file transfer is required' });
-    }
-
     try {
-        const fromOfficer = await pool.query(
-            "SELECT id, email, display_name AS name FROM users WHERE id = $1 AND role = 'officer'",
-            [fromId]
-        );
-        if (fromOfficer.rows.length === 0) return res.status(404).json({ error: 'Source officer not found' });
-
-        const results = [];
-        for (const t of transfers) {
-            if (!t.file_id || !t.to_officer_id) continue;
-            if (parseInt(t.to_officer_id) === fromId) continue;
-
-            const updated = await pool.query(
-                `UPDATE files SET officer_id = $1
-                 WHERE id = $2 AND officer_id = $3 AND status = 'Active'
-                 RETURNING id, pr_number, title, process_name`,
-                [t.to_officer_id, t.file_id, fromId]
-            );
-            if (updated.rows.length > 0) {
-                results.push({ ...updated.rows[0], to_officer_id: parseInt(t.to_officer_id) });
-            }
-        }
-
-        const targetIds = [...new Set(results.map(r => r.to_officer_id))];
-        const targetOfficers = {};
-        for (const tid of targetIds) {
-            const oRes = await pool.query(
-                'SELECT id, email, display_name AS name FROM users WHERE id = $1',
-                [tid]
-            );
-            if (oRes.rows.length > 0) targetOfficers[tid] = oRes.rows[0];
-        }
-
+        const result = await executeFileTransfers(pool, {
+            fromOfficerId: req.params.id,
+            transfers: req.body.transfers,
+            userId: req.user.id,
+            ipAddress: req.ip
+        });
         const grouped = {};
-        for (const r of results) {
-            if (!grouped[r.to_officer_id]) grouped[r.to_officer_id] = [];
-            grouped[r.to_officer_id].push(r);
+        for (const file of result.transferred) {
+            if (!grouped[file.to_officer_id]) grouped[file.to_officer_id] = [];
+            grouped[file.to_officer_id].push(file);
         }
 
         res.json({
             success: true,
-            transferred_count: results.length,
-            from_officer: fromOfficer.rows[0],
+            transferred_count: result.transferredCount,
+            from_officer: result.fromOfficer,
             grouped_transfers: Object.entries(grouped).map(([toId, files]) => ({
-                to_officer: targetOfficers[parseInt(toId)],
+                to_officer: result.targetsById.get(parseInt(toId)),
                 files
             }))
         });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    } catch (error) {
+        res.status(error.statusCode || 500).json({ error: error.message });
     }
 });
 

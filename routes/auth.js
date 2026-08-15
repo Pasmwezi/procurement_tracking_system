@@ -4,14 +4,13 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
 const rateLimit = require('express-rate-limit');
+const JWT_SECRET = require('../config/jwtSecret');
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 5, // 5 requests per windowMs
     message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
 });
-
-const JWT_SECRET = process.env.JWT_SECRET || 'file-tracker-secret-key-change-in-production';
 
 // POST /api/auth/login
 router.post('/login', authLimiter, async (req, res) => {

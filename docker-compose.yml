@@ -33,6 +33,7 @@ services:
       - "3006:3000"
     environment:
       DATABASE_URL: postgres://tracker:tracker_pass_12Moitoi2060@db:5432/file_tracking
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       NODE_ENV: production
       TZ: America/Halifax
       SERVER_HTTPS: "true"

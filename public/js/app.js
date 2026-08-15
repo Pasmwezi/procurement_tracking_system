@@ -1899,8 +1899,9 @@ async function deleteOfficer(id) {
 // Transfer
 async function openTransfer(officerId, officerName) {
     try {
-        const files = await api(`/api/files?officer_id=${officerId}&status=Active`);
-        if (!files || files.length === 0) {
+        const response = await api(`/api/officers/${officerId}/transfer-candidates`);
+        const files = normalizeFilesResponse(response);
+        if (files.length === 0) {
             showToast('No active files to transfer', 'info');
             return;
         }

@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
-const JWT_SECRET = process.env.JWT_SECRET || 'file-tracker-secret-key-change-in-production';
+const JWT_SECRET = require('../config/jwtSecret');
 
 async function requireAuth(req, res, next) {
     const authHeader = req.headers.authorization;

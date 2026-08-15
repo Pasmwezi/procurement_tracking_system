@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const pool = require('../db/pool');
 const { body, param, query } = require('express-validator');
 const { validateRequest } = require('../middleware/validate');
+const { replaceProcessSteps } = require('../services/processSteps');
 
 // GET /api/admin/users — list all users with team info
 router.get('/users', async (req, res) => {
@@ -314,72 +315,16 @@ router.put('/processes/:name/steps', [
     body('steps').isArray().withMessage('Steps must be an array'),
     validateRequest
 ], async (req, res) => {
-    const processName = req.params.name;
-    const { steps } = req.body; // array of { id, step_name, sla_days, step_order }
-
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-
-        // Verify process exists
-        const procCheck = await client.query('SELECT name FROM processes WHERE name = $1', [processName]);
-        if (procCheck.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Process not found' });
-        }
-
-        // Get existing steps to see which ones are being deleted
-        const existingSteps = await client.query('SELECT id FROM process_steps WHERE process_name = $1', [processName]);
-        const existingIds = existingSteps.rows.map(r => r.id);
-        const incomingIds = steps.filter(s => s.id).map(s => parseInt(s.id));
-        const idsToDelete = existingIds.filter(id => !incomingIds.includes(id));
-
-        // Delete omitted steps
-        if (idsToDelete.length > 0) {
-            try {
-                await client.query('DELETE FROM process_steps WHERE id = ANY($1)', [idsToDelete]);
-            } catch (delErr) {
-                // 23503 is foreign_key_violation
-                if (delErr.code === '23503') {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({ error: 'Cannot delete steps that are referencing active or tracked files. Disable them or add new steps instead.' });
-                }
-                throw delErr;
-            }
-        }
-
-        // Processing array sequentially to build cum_days
-        let cumDays = 0;
-        for (let i = 0; i < steps.length; i++) {
-            const step = steps[i];
-            const slaDays = parseInt(step.sla_days) || 0;
-            cumDays += slaDays;
-
-            // Assume step_order is implicit by array index if not provided
-            const seqOrder = i + 1;
-
-            if (step.id) {
-                // Update
-                await client.query(
-                    'UPDATE process_steps SET step_name = $1, sla_days = $2, cum_days = $3, step_order = $4 WHERE id = $5 AND process_name = $6',
-                    [step.step_name.trim(), slaDays, cumDays, seqOrder, parseInt(step.id), processName]
-                );
-            } else {
-                // Insert
-                await client.query(
-                    'INSERT INTO process_steps (process_name, step_name, sla_days, cum_days, step_order) VALUES ($1, $2, $3, $4, $5)',
-                    [processName, step.step_name.trim(), slaDays, cumDays, seqOrder]
-                );
-            }
-        }
-
-        await client.query('COMMIT');
-        res.json({ success: true });
-    } catch (err) {
-        await client.query('ROLLBACK');
-        res.status(500).json({ error: err.message });
-    } finally {
-        client.release();
+        const result = await replaceProcessSteps(pool, {
+            processName: req.params.name,
+            steps: req.body.steps,
+            userId: req.user.id,
+            ipAddress: req.ip
+        });
+        res.json(result);
+    } catch (error) {
+        res.status(error.statusCode || 500).json({ error: error.message });
     }
 });
 
