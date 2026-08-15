@@ -41,17 +41,17 @@ app.get('/api/health', async (req, res) => {
 // Admin-only routes
 app.use('/api/admin', requireAuth, requireRole('admin'), adminRouter);
 
-// Protected API routes (team_leader + officer)
-app.use('/api/officers', requireAuth, requireRole('team_leader', 'officer'), officersRouter);
-app.use('/api/files', requireAuth, requireRole('team_leader', 'officer'), filesRouter);
+// Protected API routes. Admins can read operational data across all teams.
+app.use('/api/officers', requireAuth, requireRole('admin', 'team_leader', 'officer'), officersRouter);
+app.use('/api/files', requireAuth, requireRole('admin', 'team_leader', 'officer'), filesRouter);
 app.use('/api/processes', requireAuth, processesRouter);
-app.use('/api/notifications', requireAuth, requireRole('team_leader', 'officer'), notificationsRouter);
-app.use('/api/triage', requireAuth, requireRole('team_leader'), triageRouter);
+app.use('/api/notifications', requireAuth, requireRole('admin', 'team_leader', 'officer'), notificationsRouter);
+app.use('/api/triage', requireAuth, requireRole('admin', 'team_leader'), triageRouter);
 
 // Priority-2 routes
-app.use('/api/vendors', requireAuth, requireRole('team_leader', 'officer'), vendorsRouter);
-app.use('/api/bids', requireAuth, requireRole('team_leader', 'officer'), bidsRouter);
-app.use('/api/purchase-orders', requireAuth, requireRole('team_leader', 'officer'), purchaseOrdersRouter);
+app.use('/api/vendors', requireAuth, requireRole('admin', 'team_leader', 'officer'), vendorsRouter);
+app.use('/api/bids', requireAuth, requireRole('admin', 'team_leader', 'officer'), bidsRouter);
+app.use('/api/purchase-orders', requireAuth, requireRole('admin', 'team_leader', 'officer'), purchaseOrdersRouter);
 
 // Manual SLA check trigger (team_leader only)
 app.post('/api/sla-check', requireAuth, requireRole('team_leader'), async (req, res) => {
