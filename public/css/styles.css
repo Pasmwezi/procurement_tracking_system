@@ -2035,8 +2035,12 @@ body::before {
     border-radius: var(--radius) var(--radius) 0 0;
 }
 
+<<<<<<< HEAD
 .modal-wide { width: 900px; max-width: 95vw; }
 .modal-md { width: 720px !important; max-width: 94vw !important; }
+=======
+.modal-wide { width: 900px; }
+>>>>>>> b4d08b8248fc70139a2d78bace5ae6dfc1719499
 
 @keyframes modalSlide {
     from { opacity: 0; transform: translateY(20px) scale(0.96); }
