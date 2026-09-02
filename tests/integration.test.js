@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { Pool } = require('pg');
 const { executeFileTransfers } = require('../services/fileTransfers');
 const { replaceProcessSteps } = require('../services/processSteps');
+const { syncTriageAwardStatus, reconcileAssignedTriageAwards } = require('../services/triageProgress');
 
 const connectionString = process.env.TEST_DATABASE_URL;
 
@@ -62,6 +63,24 @@ if (!connectionString) {
                 old_value JSONB,
                 new_value JSONB,
                 ip_address TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE triage_files (
+                id SERIAL PRIMARY KEY,
+                pr_number TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                business_owner TEXT NOT NULL,
+                status TEXT NOT NULL,
+                file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
+                updated_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE triage_status_history (
+                id SERIAL PRIMARY KEY,
+                triage_file_id INTEGER NOT NULL REFERENCES triage_files(id) ON DELETE CASCADE,
+                from_status TEXT,
+                to_status TEXT NOT NULL,
+                changed_by INTEGER,
+                note TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
             );
         `);
@@ -150,5 +169,53 @@ if (!connectionString) {
         }), /referenced/i);
         const after = await pool.query("SELECT id, step_name, step_order FROM process_steps WHERE process_name='Editable' ORDER BY step_order");
         assert.deepEqual(after.rows, before.rows);
+    });
+
+    test('syncTriageAwardStatus atomically marks a linked Assigned triage file as Awarded', async () => {
+        await pool.query('TRUNCATE triage_status_history, triage_files, audit_log, notifications, file_step_log, files, process_steps, processes RESTART IDENTITY CASCADE');
+        await pool.query("INSERT INTO processes(name) VALUES ('Awardable')");
+        const step = await pool.query("INSERT INTO process_steps(process_name,step_name,sla_days,cum_days,step_order) VALUES ('Awardable','Contract Award',1,1,1) RETURNING id");
+        const officer = await pool.query("SELECT id FROM users WHERE role='officer' LIMIT 1");
+        const file = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-AWARD','Award','Awardable',$1,$2,'Active') RETURNING id", [officer.rows[0].id, step.rows[0].id]);
+        const triage = await pool.query("INSERT INTO triage_files(pr_number,title,business_owner,status,file_id) VALUES ('PR-AWARD','Award','Owner','Assigned',$1) RETURNING id", [file.rows[0].id]);
+
+        const updatedIds = await syncTriageAwardStatus(pool, {
+            fileId: file.rows[0].id,
+            stepName: 'Contract Award',
+            fileStatus: 'Active',
+            userId: 99,
+            ipAddress: '127.0.0.1'
+        });
+
+        assert.deepEqual(updatedIds, [triage.rows[0].id]);
+        assert.equal((await pool.query('SELECT status FROM triage_files WHERE id=$1', [triage.rows[0].id])).rows[0].status, 'Awarded');
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM triage_status_history WHERE triage_file_id=$1 AND from_status='Assigned' AND to_status='Awarded'", [triage.rows[0].id])).rows[0].count, 1);
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM audit_log WHERE entity_id=$1 AND action='triage.status_change'", [triage.rows[0].id])).rows[0].count, 1);
+    });
+
+    test('reconcileAssignedTriageAwards repairs assigned rows already at award or completion', async () => {
+        await pool.query('TRUNCATE triage_status_history, triage_files, audit_log, notifications, file_step_log, files, process_steps, processes RESTART IDENTITY CASCADE');
+        await pool.query("INSERT INTO processes(name) VALUES ('Competitive')");
+        await pool.query("INSERT INTO process_steps(process_name,step_name,sla_days,cum_days,step_order) VALUES ('Competitive','Evaluation',1,1,1), ('Competitive','Contract Award',1,2,2), ('Competitive','Completed',0,2,3)");
+        const steps = await pool.query("SELECT step_name, id FROM process_steps WHERE process_name='Competitive'");
+        const stepIds = Object.fromEntries(steps.rows.map(row => [row.step_name, row.id]));
+        const officer = await pool.query("SELECT id FROM users WHERE role='officer' LIMIT 1");
+        const awardFile = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-R1','Award stage','Competitive',$1,$2,'Active') RETURNING id", [officer.rows[0].id, stepIds['Contract Award']]);
+        const completedFile = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-R2','Completed stage','Competitive',$1,$2,'Completed') RETURNING id", [officer.rows[0].id, stepIds.Completed]);
+        const earlyFile = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-R3','Evaluation stage','Competitive',$1,$2,'Active') RETURNING id", [officer.rows[0].id, stepIds.Evaluation]);
+        for (const [index, file] of [awardFile, completedFile, earlyFile].entries()) {
+            await pool.query("INSERT INTO triage_files(pr_number,title,business_owner,status,file_id) VALUES ($1,$2,'Owner','Assigned',$3)", [`PR-R${index + 1}`, `Row ${index + 1}`, file.rows[0].id]);
+        }
+
+        const reconciled = await reconcileAssignedTriageAwards(pool, { note: 'Regression reconciliation' });
+
+        assert.equal(reconciled.length, 2);
+        assert.deepEqual((await pool.query('SELECT pr_number,status FROM triage_files ORDER BY pr_number')).rows, [
+            { pr_number: 'PR-R1', status: 'Awarded' },
+            { pr_number: 'PR-R2', status: 'Awarded' },
+            { pr_number: 'PR-R3', status: 'Assigned' }
+        ]);
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM triage_status_history WHERE to_status='Awarded'")).rows[0].count, 2);
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM audit_log WHERE action='triage.status_change'")).rows[0].count, 2);
     });
 }

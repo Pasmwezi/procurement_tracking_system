@@ -7,6 +7,7 @@ const XLSX = require('xlsx');
 const { body, query } = require('express-validator');
 const { validateRequest } = require('../middleware/validate');
 const { logAction } = require('../services/auditLogger');
+const { syncTriageAwardStatus } = require('../services/triageProgress');
 
 // Multer: memory storage (no disk writes)
 const upload = multer({
@@ -46,6 +47,8 @@ router.get('/', [
             LEFT JOIN teams t ON t.id = tf.team_id
             LEFT JOIN users u ON u.id = tf.created_by
             LEFT JOIN files f ON f.id = tf.file_id
+            LEFT JOIN process_steps ps ON ps.id = f.current_step_id
+            LEFT JOIN users ou ON ou.id = f.officer_id
         `;
         const params = [];
         const conditions = [];
@@ -71,7 +74,11 @@ router.get('/', [
         params.push(limit, offset);
         const dataQuery = `
             SELECT tf.*, t.name AS team_name, u.display_name AS created_by_name,
-                   f.pr_number AS assigned_pr_number
+                   f.pr_number AS assigned_pr_number, f.status AS file_status,
+                   f.process_name, ou.display_name AS assigned_officer_name,
+                   ps.step_name AS current_step_name, ps.step_order AS current_step_order,
+                   (SELECT COUNT(*) FROM process_steps all_steps
+                    WHERE all_steps.process_name = f.process_name) AS total_steps
             ${baseQuery}
             ${whereClause}
             ORDER BY tf.created_at DESC
@@ -123,12 +130,17 @@ router.get('/:id(\\d+)', async (req, res) => {
     try {
         const tf = await pool.query(`
             SELECT tf.*, t.name AS team_name, u.display_name AS created_by_name,
-                   ou.display_name AS assigned_officer_name
+                   ou.display_name AS assigned_officer_name,
+                   f.status AS file_status, f.process_name,
+                   ps.step_name AS current_step_name, ps.step_order AS current_step_order,
+                   (SELECT COUNT(*) FROM process_steps all_steps
+                    WHERE all_steps.process_name = f.process_name) AS total_steps
             FROM triage_files tf
             LEFT JOIN teams t ON t.id = tf.team_id
             LEFT JOIN users u ON u.id = tf.created_by
             LEFT JOIN files f ON f.id = tf.file_id
             LEFT JOIN users ou ON ou.id = f.officer_id
+            LEFT JOIN process_steps ps ON ps.id = f.current_step_id
             WHERE tf.id = $1
         `, [req.params.id]);
 
@@ -147,7 +159,38 @@ router.get('/:id(\\d+)', async (req, res) => {
             [req.params.id]
         );
 
-        res.json({ ...tf.rows[0], missing_docs: docs.rows, status_history: history.rows });
+        const triageFile = tf.rows[0];
+        let fileProgress = null;
+        if (triageFile.file_id) {
+            const [steps, stepLog] = await Promise.all([
+                pool.query(
+                    'SELECT id, step_name, step_order, sla_days, cum_days FROM process_steps WHERE process_name = $1 ORDER BY step_order',
+                    [triageFile.process_name]
+                ),
+                pool.query(
+                    'SELECT id, step_id, started_at, completed_at, sla_met, comment FROM file_step_log WHERE file_id = $1 ORDER BY started_at',
+                    [triageFile.file_id]
+                )
+            ]);
+            fileProgress = {
+                file_id: triageFile.file_id,
+                file_status: triageFile.file_status,
+                process_name: triageFile.process_name,
+                assigned_officer_name: triageFile.assigned_officer_name,
+                current_step_name: triageFile.current_step_name,
+                current_step_order: triageFile.current_step_order,
+                total_steps: Number(triageFile.total_steps || 0),
+                steps: steps.rows,
+                step_log: stepLog.rows
+            };
+        }
+
+        res.json({
+            ...triageFile,
+            missing_docs: docs.rows,
+            status_history: history.rows,
+            file_progress: fileProgress
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -459,6 +502,14 @@ router.post('/:id/assign', [
         await logStatusChange(client, req.params.id, 'Triaged', 'Assigned', req.user.id,
             `Assigned to ${officerName.rows[0]?.display_name || 'officer'} (${process_name.replace(/_/g, ' ')})`);
 
+        const awardedTriageIds = await syncTriageAwardStatus(client, {
+            fileId: file.id,
+            stepName: targetStep.step_name,
+            fileStatus: file.status,
+            userId: req.user.id,
+            ipAddress: req.ip
+        });
+
         await logAction({
             userId: req.user.id,
             action: 'triage.assign',
@@ -470,7 +521,11 @@ router.post('/:id/assign', [
 
         await client.query('COMMIT');
 
-        res.status(201).json({ triage_id: triageFile.id, file_id: file.id, status: 'Assigned' });
+        res.status(201).json({
+            triage_id: triageFile.id,
+            file_id: file.id,
+            status: awardedTriageIds.length > 0 ? 'Awarded' : 'Assigned'
+        });
 
         // Send assignment email (non-blocking)
         try {

@@ -65,3 +65,37 @@ test('file completion follows the configured terminal step rather than an exact 
     assert.match(files, /AS is_terminal/);
     assert.match(files, /const isCompleted = next\.is_terminal/);
 });
+
+test('triage list and detail expose linked file progression', () => {
+    const triage = source('routes/triage.js');
+    const app = source('public/js/app.js');
+    const html = source('public/index.html');
+    assert.match(triage, /current_step_name/);
+    assert.match(triage, /total_steps/);
+    assert.match(triage, /file_progress/);
+    assert.match(app, /renderTriageProgress/);
+    assert.match(app, /File Progression/);
+    assert.match(html, /<th>Progress<\/th>/);
+});
+
+test('file advancement synchronizes linked triage status to Awarded', () => {
+    const files = source('routes/files.js');
+    assert.match(files, /syncTriageAwardStatus/);
+    assert.match(files, /stepName: next\.step_name/);
+});
+
+test('triage progression detail uses an available status badge renderer', () => {
+    const app = source('public/js/app.js');
+    assert.doesNotMatch(app, /statusBadge\(progress\.file_status\)/);
+    assert.match(app, /triageStatusBadge\(progress\.file_status\)/);
+});
+
+test('historical triage award reconciliation has a transactional operator command', () => {
+    const pkg = JSON.parse(source('package.json'));
+    const script = source('scripts/reconcileTriageAwards.js');
+    assert.equal(pkg.scripts['reconcile:triage-awards'], 'node scripts/reconcileTriageAwards.js');
+    assert.match(script, /reconcileAssignedTriageAwards/);
+    assert.match(script, /client\.query\('BEGIN'\)/);
+    assert.match(script, /client\.query\('COMMIT'\)/);
+    assert.match(script, /client\.query\('ROLLBACK'\)/);
+});

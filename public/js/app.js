@@ -2607,6 +2607,57 @@ function formatCurrency(val) {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'CAD' }).format(val);
 }
 
+function renderTriageProgress(triageFile) {
+    if (!triageFile.file_id) return '<span class="text-muted">Not assigned</span>';
+
+    const total = Number(triageFile.total_steps || 0);
+    const current = Number(triageFile.current_step_order || 0);
+    const completed = triageFile.file_status === 'Completed';
+    const percentage = completed ? 100 : (total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0);
+    const label = completed ? 'Completed' : (triageFile.current_step_name || 'Awaiting progression');
+
+    return `<div class="step-cell">
+        <div class="step-name">${escHtml(label)}</div>
+        <div class="step-progress-wrapper"><div class="step-progress-bar" style="width:${percentage}%"></div></div>
+        <div class="step-count">${completed ? total : current} of ${total} steps</div>
+    </div>`;
+}
+
+function renderTriageFileProgress(progress) {
+    const logs = new Map((progress.step_log || []).map(log => [log.step_id, log]));
+    const currentStep = (progress.steps || []).find(step => step.step_order === progress.current_step_order);
+    let html = `<h3 class="timeline-title" style="margin-top:24px;">File Progression</h3>
+        <div class="modal-meta-grid">
+            <div class="meta-box"><span class="meta-label">PROCESS</span><span class="meta-value">${escHtml((progress.process_name || '').replace(/_/g, ' '))}</span></div>
+            <div class="meta-box"><span class="meta-label">CURRENT STEP</span><span class="meta-value">${escHtml(progress.current_step_name || progress.file_status || '—')}</span></div>
+            <div class="meta-box"><span class="meta-label">OFFICER</span><span class="meta-value">${escHtml(progress.assigned_officer_name || '—')}</span></div>
+            <div class="meta-box"><span class="meta-label">FILE STATUS</span><span class="meta-value">${triageStatusBadge(progress.file_status)}</span></div>
+        </div>
+        <div class="timeline-vertical">`;
+
+    for (const step of progress.steps || []) {
+        const log = logs.get(step.id);
+        let stateClass = 'timeline-pending';
+        let dateInfo = 'Upcoming';
+        if (log?.completed_at) {
+            stateClass = 'timeline-completed';
+            dateInfo = `Completed ${new Date(log.completed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        } else if (step.id === currentStep?.id) {
+            stateClass = 'timeline-active';
+            dateInfo = log?.started_at
+                ? `Started ${new Date(log.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                : 'Current step';
+        }
+        html += `<div class="timeline-item ${stateClass}">
+            <div class="timeline-marker"><div class="timeline-dot"></div></div>
+            <div class="timeline-content"><div class="timeline-step-name">${escHtml(step.step_name)}</div><div class="timeline-date">${dateInfo}</div></div>
+        </div>`;
+    }
+
+    html += `</div><button class="btn btn-secondary btn-full" style="margin-top:14px;" onclick="closeModal(); viewFileDetail(${progress.file_id});">Open Full File</button>`;
+    return html;
+}
+
 async function loadTriage() {
     try {
         // Load stats
@@ -2654,6 +2705,7 @@ async function refreshTriageTable() {
             <td>${formatCurrency(t.estimated_value)}</td>
             <td>${escHtml(t.team_name || '—')}</td>
             <td>${triageStatusBadge(t.status)}</td>
+            <td>${renderTriageProgress(t)}</td>
             <td>
                 <div class="date-cell">
                     <div class="date-main">${dateStr}</div>
@@ -2712,6 +2764,7 @@ $('#searchTriage').addEventListener('input', () => {
                 <td>${formatCurrency(t.estimated_value)}</td>
                 <td>${escHtml(t.team_name || '—')}</td>
                 <td>${triageStatusBadge(t.status)}</td>
+                <td>${renderTriageProgress(t)}</td>
                 <td>
                     <div class="date-cell">
                         <div class="date-main">${dateStr}</div>
@@ -2825,6 +2878,10 @@ async function viewTriageDetail(id) {
                 <span class="meta-value">${escHtml(t.created_by_name || '—')}</span>
             </div>
         </div>`;
+
+        if (t.file_progress) {
+            html += renderTriageFileProgress(t.file_progress);
+        }
 
         // Missing documents section
         if (t.missing_docs && t.missing_docs.length > 0) {

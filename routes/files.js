@@ -5,6 +5,7 @@ const { sendAssignmentEmail } = require('../services/emailService');
 const { body, query } = require('express-validator');
 const { validateRequest } = require('../middleware/validate');
 const { logAction } = require('../services/auditLogger');
+const { syncTriageAwardStatus } = require('../services/triageProgress');
 
 // GET /api/files — list files with role-based scoping
 // Team Leader: all files (can assign cross-team)
@@ -476,6 +477,14 @@ router.put('/:id/advance', [
             'INSERT INTO file_step_log (file_id, step_id, started_at, completed_at) VALUES ($1, $2, $3, $4)',
             [req.params.id, next.id, now, isCompleted ? now : null]
         );
+
+        await syncTriageAwardStatus(client, {
+            fileId: file.id,
+            stepName: next.step_name,
+            fileStatus: isCompleted ? 'Completed' : 'Active',
+            userId: req.user.id,
+            ipAddress: req.ip
+        });
 
         await client.query('COMMIT');
 
