@@ -6,6 +6,7 @@ const { body, query } = require('express-validator');
 const { validateRequest } = require('../middleware/validate');
 const { logAction } = require('../services/auditLogger');
 const { syncTriageAwardStatus, syncTriageCancellationStatus } = require('../services/triageProgress');
+const { lockActiveFileForAdvancement, updateActiveFileProgress } = require('../services/fileLifecycle');
 
 // GET /api/files — list files with role-based scoping
 // Team Leader: all files (can assign cross-team)
@@ -431,14 +432,7 @@ router.put('/:id/advance', [
     try {
         await client.query('BEGIN');
 
-        const fileResult = await client.query(
-            'SELECT f.*, ps.step_order, ps.process_name FROM files f JOIN process_steps ps ON ps.id = f.current_step_id WHERE f.id = $1',
-            [req.params.id]
-        );
-        if (fileResult.rows.length === 0) throw new Error('File not found');
-
-        const file = fileResult.rows[0];
-        if (file.status === 'Completed') throw new Error('File is already completed');
+        const file = await lockActiveFileForAdvancement(client, req.params.id);
 
         const nextStep = await client.query(
             `SELECT ps.*,
@@ -467,11 +461,13 @@ router.put('/:id/advance', [
 
         const isCompleted = next.is_terminal;
 
-        await client.query(
-            `UPDATE files SET current_step_id = $1, step_started_at = $2,
-       status = $3, completed_at = $4 WHERE id = $5`,
-            [next.id, now, isCompleted ? 'Completed' : 'Active', isCompleted ? now : null, req.params.id]
-        );
+        await updateActiveFileProgress(client, {
+            fileId: req.params.id,
+            currentStepId: next.id,
+            startedAt: now,
+            status: isCompleted ? 'Completed' : 'Active',
+            completedAt: isCompleted ? now : null
+        });
 
         await client.query(
             'INSERT INTO file_step_log (file_id, step_id, started_at, completed_at) VALUES ($1, $2, $3, $4)',

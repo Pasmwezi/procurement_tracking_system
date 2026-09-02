@@ -4,6 +4,10 @@ const { Pool } = require('pg');
 const { executeFileTransfers } = require('../services/fileTransfers');
 const { replaceProcessSteps } = require('../services/processSteps');
 const {
+    lockActiveFileForAdvancement,
+    updateActiveFileProgress
+} = require('../services/fileLifecycle');
+const {
     syncTriageAwardStatus,
     reconcileAssignedTriageAwards,
     syncTriageCancellationStatus,
@@ -44,7 +48,9 @@ if (!connectionString) {
                 process_name TEXT REFERENCES processes(name),
                 officer_id INTEGER NOT NULL REFERENCES users(id),
                 current_step_id INTEGER REFERENCES process_steps(id),
-                status TEXT NOT NULL DEFAULT 'Active'
+                status TEXT NOT NULL DEFAULT 'Active',
+                step_started_at TIMESTAMP,
+                completed_at TIMESTAMP
             );
             CREATE TABLE notifications (
                 id SERIAL PRIMARY KEY,
@@ -282,5 +288,66 @@ if (!connectionString) {
         ]);
         assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM triage_status_history WHERE to_status='Cancelled'")).rows[0].count, 1);
         assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM audit_log WHERE action='triage.status_change'")).rows[0].count, 1);
+    });
+
+    test('cancelled files cannot be advanced sequentially', async () => {
+        await pool.query('TRUNCATE triage_status_history, triage_files, audit_log, notifications, file_step_log, files, process_steps, processes RESTART IDENTITY CASCADE');
+        await pool.query("INSERT INTO processes(name) VALUES ('Lifecycle')");
+        const step = await pool.query("INSERT INTO process_steps(process_name,step_name,sla_days,cum_days,step_order) VALUES ('Lifecycle','Evaluation',1,1,1) RETURNING id");
+        const officer = await pool.query("SELECT id FROM users WHERE role='officer' LIMIT 1");
+        const file = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-LIFECYCLE-1','Cancelled lifecycle','Lifecycle',$1,$2,'Cancelled') RETURNING id", [officer.rows[0].id, step.rows[0].id]);
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await assert.rejects(
+                () => lockActiveFileForAdvancement(client, file.rows[0].id),
+                /only active files can be advanced/i
+            );
+            await client.query('ROLLBACK');
+        } finally {
+            client.release();
+        }
+        assert.equal((await pool.query('SELECT status FROM files WHERE id=$1', [file.rows[0].id])).rows[0].status, 'Cancelled');
+    });
+
+    test('cancellation winning a row-lock race prevents file resurrection', async () => {
+        await pool.query('TRUNCATE triage_status_history, triage_files, audit_log, notifications, file_step_log, files, process_steps, processes RESTART IDENTITY CASCADE');
+        await pool.query("INSERT INTO processes(name) VALUES ('Lifecycle')");
+        const steps = await pool.query("INSERT INTO process_steps(process_name,step_name,sla_days,cum_days,step_order) VALUES ('Lifecycle','Evaluation',1,1,1),('Lifecycle','Contract Award',1,2,2) RETURNING id,step_order");
+        const officer = await pool.query("SELECT id FROM users WHERE role='officer' LIMIT 1");
+        const file = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-LIFECYCLE-2','Race lifecycle','Lifecycle',$1,$2,'Active') RETURNING id", [officer.rows[0].id, steps.rows.find(row => row.step_order === 1).id]);
+
+        const cancelling = await pool.connect();
+        const advancing = await pool.connect();
+        try {
+            await cancelling.query('BEGIN');
+            await cancelling.query('SELECT id FROM files WHERE id=$1 FOR UPDATE', [file.rows[0].id]);
+            await cancelling.query("UPDATE files SET status='Cancelled' WHERE id=$1", [file.rows[0].id]);
+
+            await advancing.query('BEGIN');
+            const blockedAdvance = lockActiveFileForAdvancement(advancing, file.rows[0].id);
+            await new Promise(resolve => setTimeout(resolve, 50));
+            await cancelling.query('COMMIT');
+
+            await assert.rejects(blockedAdvance, /only active files can be advanced/i);
+            await advancing.query('ROLLBACK');
+        } finally {
+            cancelling.release();
+            advancing.release();
+        }
+
+        assert.equal((await pool.query('SELECT status FROM files WHERE id=$1', [file.rows[0].id])).rows[0].status, 'Cancelled');
+    });
+
+    test('progress updates are conditional on an active file', async () => {
+        const file = await pool.query("SELECT id FROM files WHERE pr_number='PR-LIFECYCLE-2'");
+        await assert.rejects(() => updateActiveFileProgress(pool, {
+            fileId: file.rows[0].id,
+            currentStepId: 1,
+            startedAt: new Date(),
+            status: 'Active',
+            completedAt: null
+        }), /file is no longer active/i);
     });
 }
