@@ -5,7 +5,7 @@ const { sendAssignmentEmail } = require('../services/emailService');
 const { body, query } = require('express-validator');
 const { validateRequest } = require('../middleware/validate');
 const { logAction } = require('../services/auditLogger');
-const { syncTriageAwardStatus } = require('../services/triageProgress');
+const { syncTriageAwardStatus, syncTriageCancellationStatus } = require('../services/triageProgress');
 
 // GET /api/files — list files with role-based scoping
 // Team Leader: all files (can assign cross-team)
@@ -543,7 +543,7 @@ router.put('/:id/cancel', [
         await client.query('BEGIN');
 
         const fileResult = await client.query(
-            'SELECT * FROM files WHERE id = $1',
+            'SELECT * FROM files WHERE id = $1 FOR UPDATE',
             [req.params.id]
         );
         if (fileResult.rows.length === 0) throw new Error('File not found');
@@ -566,22 +566,28 @@ router.put('/:id/cancel', [
             ['Cancelled', now, reason, req.params.id]
         );
 
+        await syncTriageCancellationStatus(client, {
+            fileId: file.id,
+            fileStatus: 'Cancelled',
+            userId: req.user.id,
+            ipAddress: req.ip,
+            note: `Linked file cancelled: ${reason}`,
+            source: 'file_cancellation'
+        });
+
+        await client.query(
+            `INSERT INTO audit_log
+             (user_id, action, entity_type, entity_id, new_value, ip_address)
+             VALUES ($1, 'file.cancel', 'file', $2, $3, $4)`,
+            [req.user.id, file.id, JSON.stringify({ reason }), req.ip]
+        );
+
         await client.query('COMMIT');
         
         const updatedFile = await pool.query(
             'SELECT * FROM files WHERE id = $1',
             [req.params.id]
         );
-
-        // Audit log for file cancellation
-        await logAction({
-            userId: req.user.id,
-            action: 'file.cancel',
-            entityType: 'file',
-            entityId: file.id,
-            newValue: { reason },
-            ipAddress: req.ip
-        });
 
         res.json(updatedFile.rows[0]);
     } catch (err) {

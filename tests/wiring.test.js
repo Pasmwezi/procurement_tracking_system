@@ -99,3 +99,21 @@ test('historical triage award reconciliation has a transactional operator comman
     assert.match(script, /client\.query\('COMMIT'\)/);
     assert.match(script, /client\.query\('ROLLBACK'\)/);
 });
+
+test('file cancellation synchronizes linked Assigned triage status transactionally', () => {
+    const files = source('routes/files.js');
+    assert.match(files, /SELECT \* FROM files WHERE id = \$1 FOR UPDATE/);
+    assert.match(files, /syncTriageCancellationStatus/);
+    assert.match(files, /fileId: file\.id/);
+    assert.match(files, /source: 'file_cancellation'/);
+});
+
+test('historical triage cancellation reconciliation has a transactional operator command', () => {
+    const pkg = JSON.parse(source('package.json'));
+    const script = source('scripts/reconcileTriageCancellations.js');
+    assert.equal(pkg.scripts['reconcile:triage-cancellations'], 'node scripts/reconcileTriageCancellations.js');
+    assert.match(script, /reconcileAssignedTriageCancellations/);
+    assert.match(script, /client\.query\('BEGIN'\)/);
+    assert.match(script, /client\.query\('COMMIT'\)/);
+    assert.match(script, /client\.query\('ROLLBACK'\)/);
+});

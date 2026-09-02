@@ -3,7 +3,12 @@ const assert = require('node:assert/strict');
 const { Pool } = require('pg');
 const { executeFileTransfers } = require('../services/fileTransfers');
 const { replaceProcessSteps } = require('../services/processSteps');
-const { syncTriageAwardStatus, reconcileAssignedTriageAwards } = require('../services/triageProgress');
+const {
+    syncTriageAwardStatus,
+    reconcileAssignedTriageAwards,
+    syncTriageCancellationStatus,
+    reconcileAssignedTriageCancellations
+} = require('../services/triageProgress');
 
 const connectionString = process.env.TEST_DATABASE_URL;
 
@@ -217,5 +222,65 @@ if (!connectionString) {
         ]);
         assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM triage_status_history WHERE to_status='Awarded'")).rows[0].count, 2);
         assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM audit_log WHERE action='triage.status_change'")).rows[0].count, 2);
+    });
+
+    test('syncTriageCancellationStatus marks only linked Assigned triage rows as Cancelled', async () => {
+        await pool.query('TRUNCATE triage_status_history, triage_files, audit_log, notifications, file_step_log, files, process_steps, processes RESTART IDENTITY CASCADE');
+        await pool.query("INSERT INTO processes(name) VALUES ('Cancellable')");
+        const step = await pool.query("INSERT INTO process_steps(process_name,step_name,sla_days,cum_days,step_order) VALUES ('Cancellable','Evaluation',1,1,1) RETURNING id");
+        const officer = await pool.query("SELECT id FROM users WHERE role='officer' LIMIT 1");
+        const file = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-CANCEL','Cancel','Cancellable',$1,$2,'Cancelled') RETURNING id", [officer.rows[0].id, step.rows[0].id]);
+        const assigned = await pool.query("INSERT INTO triage_files(pr_number,title,business_owner,status,file_id) VALUES ('PR-CANCEL','Cancel','Owner','Assigned',$1) RETURNING id", [file.rows[0].id]);
+        await pool.query("INSERT INTO triage_files(pr_number,title,business_owner,status,file_id) VALUES ('PR-CANCEL-AWARDED','Awarded stays awarded','Owner','Awarded',$1)", [file.rows[0].id]);
+
+        const ignoredIds = await syncTriageCancellationStatus(pool, {
+            fileId: file.rows[0].id,
+            fileStatus: 'Active',
+            userId: 99
+        });
+        assert.deepEqual(ignoredIds, []);
+        assert.equal((await pool.query('SELECT status FROM triage_files WHERE id=$1', [assigned.rows[0].id])).rows[0].status, 'Assigned');
+
+        const updatedIds = await syncTriageCancellationStatus(pool, {
+            fileId: file.rows[0].id,
+            fileStatus: 'Cancelled',
+            userId: 99,
+            ipAddress: '127.0.0.1',
+            note: 'File cancelled: procurement withdrawn'
+        });
+
+        assert.deepEqual(updatedIds, [assigned.rows[0].id]);
+        assert.deepEqual((await pool.query('SELECT pr_number,status FROM triage_files ORDER BY pr_number')).rows, [
+            { pr_number: 'PR-CANCEL', status: 'Cancelled' },
+            { pr_number: 'PR-CANCEL-AWARDED', status: 'Awarded' }
+        ]);
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM triage_status_history WHERE triage_file_id=$1 AND from_status='Assigned' AND to_status='Cancelled'", [assigned.rows[0].id])).rows[0].count, 1);
+        const audit = await pool.query("SELECT old_value,new_value FROM audit_log WHERE entity_id=$1 AND action='triage.status_change'", [assigned.rows[0].id]);
+        assert.equal(audit.rowCount, 1);
+        assert.equal(audit.rows[0].old_value.status, 'Assigned');
+        assert.equal(audit.rows[0].new_value.status, 'Cancelled');
+        assert.equal(audit.rows[0].new_value.source, 'file_cancellation');
+    });
+
+    test('reconcileAssignedTriageCancellations repairs historical rows idempotently', async () => {
+        await pool.query('TRUNCATE triage_status_history, triage_files, audit_log, notifications, file_step_log, files, process_steps, processes RESTART IDENTITY CASCADE');
+        await pool.query("INSERT INTO processes(name) VALUES ('Cancellation Reconciliation')");
+        const step = await pool.query("INSERT INTO process_steps(process_name,step_name,sla_days,cum_days,step_order) VALUES ('Cancellation Reconciliation','Evaluation',1,1,1) RETURNING id");
+        const officer = await pool.query("SELECT id FROM users WHERE role='officer' LIMIT 1");
+        const cancelledFile = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-CR1','Cancelled','Cancellation Reconciliation',$1,$2,'Cancelled') RETURNING id", [officer.rows[0].id, step.rows[0].id]);
+        const activeFile = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-CR2','Active','Cancellation Reconciliation',$1,$2,'Active') RETURNING id", [officer.rows[0].id, step.rows[0].id]);
+        await pool.query("INSERT INTO triage_files(pr_number,title,business_owner,status,file_id) VALUES ('PR-CR1','Cancelled','Owner','Assigned',$1), ('PR-CR2','Active','Owner','Assigned',$2)", [cancelledFile.rows[0].id, activeFile.rows[0].id]);
+
+        const first = await reconcileAssignedTriageCancellations(pool, { note: 'Cancellation reconciliation regression' });
+        const second = await reconcileAssignedTriageCancellations(pool, { note: 'Cancellation reconciliation regression' });
+
+        assert.equal(first.length, 1);
+        assert.equal(second.length, 0);
+        assert.deepEqual((await pool.query('SELECT pr_number,status FROM triage_files ORDER BY pr_number')).rows, [
+            { pr_number: 'PR-CR1', status: 'Cancelled' },
+            { pr_number: 'PR-CR2', status: 'Assigned' }
+        ]);
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM triage_status_history WHERE to_status='Cancelled'")).rows[0].count, 1);
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM audit_log WHERE action='triage.status_change'")).rows[0].count, 1);
     });
 }

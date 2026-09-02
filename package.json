@@ -7,6 +7,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "reconcile:triage-awards": "node scripts/reconcileTriageAwards.js",
+    "reconcile:triage-cancellations": "node scripts/reconcileTriageCancellations.js",
     "test": "node --test tests/*.test.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"

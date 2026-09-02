@@ -3,6 +3,10 @@ function isAwardMilestone(stepName, fileStatus) {
     return typeof stepName === 'string' && /\baward(?:ed)?\b/i.test(stepName);
 }
 
+function isCancellationState(fileStatus) {
+    return fileStatus === 'Cancelled';
+}
+
 async function syncTriageAwardStatus(client, {
     fileId,
     stepName,
@@ -75,4 +79,80 @@ async function reconcileAssignedTriageAwards(client, {
     return updatedIds;
 }
 
-module.exports = { isAwardMilestone, syncTriageAwardStatus, reconcileAssignedTriageAwards };
+async function syncTriageCancellationStatus(client, {
+    fileId,
+    fileStatus,
+    userId = null,
+    ipAddress = null,
+    note = 'Automatically synchronized from linked file cancellation',
+    source = 'file_cancellation'
+}) {
+    if (!isCancellationState(fileStatus)) return [];
+
+    const updated = await client.query(
+        `UPDATE triage_files
+         SET status = 'Cancelled', updated_at = NOW()
+         WHERE file_id = $1 AND status = 'Assigned'
+         RETURNING id`,
+        [fileId]
+    );
+
+    for (const row of updated.rows) {
+        await client.query(
+            `INSERT INTO triage_status_history
+             (triage_file_id, from_status, to_status, changed_by, note)
+             VALUES ($1, 'Assigned', 'Cancelled', $2, $3)`,
+            [row.id, userId, note]
+        );
+        await client.query(
+            `INSERT INTO audit_log
+             (user_id, action, entity_type, entity_id, old_value, new_value, ip_address)
+             VALUES ($1, 'triage.status_change', 'triage_file', $2, $3, $4, $5)`,
+            [
+                userId,
+                row.id,
+                JSON.stringify({ status: 'Assigned' }),
+                JSON.stringify({ status: 'Cancelled', source, file_id: fileId }),
+                ipAddress
+            ]
+        );
+    }
+
+    return updated.rows.map(row => row.id);
+}
+
+async function reconcileAssignedTriageCancellations(client, {
+    userId = null,
+    ipAddress = null,
+    note = 'Reconciled from linked file cancellation'
+} = {}) {
+    const candidates = await client.query(
+        `SELECT tf.file_id, f.status AS file_status
+         FROM triage_files tf
+         JOIN files f ON f.id = tf.file_id
+         WHERE tf.status = 'Assigned' AND f.status = 'Cancelled'
+         FOR UPDATE OF tf`
+    );
+
+    const updatedIds = [];
+    for (const candidate of candidates.rows) {
+        const ids = await syncTriageCancellationStatus(client, {
+            fileId: candidate.file_id,
+            fileStatus: candidate.file_status,
+            userId,
+            ipAddress,
+            note
+        });
+        updatedIds.push(...ids);
+    }
+    return updatedIds;
+}
+
+module.exports = {
+    isAwardMilestone,
+    isCancellationState,
+    syncTriageAwardStatus,
+    reconcileAssignedTriageAwards,
+    syncTriageCancellationStatus,
+    reconcileAssignedTriageCancellations
+};
