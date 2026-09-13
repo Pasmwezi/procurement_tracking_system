@@ -3,7 +3,7 @@
    v3 — Glassmorphism + Vibrant Dark
    ============================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap');
+/* Fonts use the local system stack defined in workspace.css. */
 
 :root {
     /* === Core Background === */

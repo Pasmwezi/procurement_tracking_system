@@ -4583,9 +4583,16 @@ window.loadPage = function(page) {
 
 // ===== Executive Reports Priority 3 =====
 async function loadReports() {
+    const reportError = $('#reportError');
+    reportError.hidden = true;
     try {
         const data = await api('/api/reports/dashboard');
         if (!data) return;
+        // A missing route can return the SPA HTML fallback, parsed as an empty object.
+        // Do not present unavailable reporting data as genuine zero-valued metrics.
+        if (!Object.prototype.hasOwnProperty.call(data, 'totalSpend')) {
+            throw new Error('Reports are currently unavailable. Please contact your administrator.');
+        }
 
         // Populate Top Stats
         $('#repTotalSpend').textContent = '$' + (data.totalSpend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -4674,7 +4681,13 @@ async function loadReports() {
         }
 
     } catch (err) {
-        showToast(err.message, 'error');
+        reportError.textContent = err.message;
+        reportError.hidden = false;
+        ['repTotalSpend', 'repSlaCompliance', 'repExpiringContracts'].forEach(id => { $(`#${id}`).textContent = '—'; });
+        $('#repProcessChart').textContent = 'Report data unavailable';
+        $('#repIntakeChart').textContent = 'Report data unavailable';
+        $('#repVendorsTable tbody').innerHTML = '<tr><td colspan="3">Report data unavailable</td></tr>';
+        $('#repExpiringTable tbody').innerHTML = '<tr><td colspan="3">Report data unavailable</td></tr>';
     }
 }
 

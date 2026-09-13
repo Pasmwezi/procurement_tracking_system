@@ -6,16 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description"
         content="Procurement File Tracking System for contracting officers - track files, monitor SLA deadlines, and manage procurement workflows.">
-    <meta name="theme-color" content="#0d0d1a">
+    <meta name="theme-color" content="#142b3f">
     <title>Procurement File Tracker</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237c3aed'/><path d='M8 8h10l6 6v10H8V8z' fill='none' stroke='white' stroke-width='2'/><path d='M18 8v6h6' fill='none' stroke='white' stroke-width='2'/></svg>">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23087c76'/><path d='M8 8h10l6 6v10H8V8z' fill='none' stroke='white' stroke-width='2'/><path d='M18 8v6h6' fill='none' stroke='white' stroke-width='2'/></svg>">
     <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/workspace.css">
 </head>
 
 <body>
+    <a class="skip-link" href="#mainContent">Skip to workspace</a>
+    <button class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Close navigation" tabindex="-1"></button>
     <!-- Login Screen -->
     <div class="login-screen" id="loginScreen">
         <div class="login-container">
@@ -44,7 +44,7 @@
                     <input type="password" id="loginPassword" class="text-input" required placeholder="Enter password"
                         autocomplete="current-password">
                 </div>
-                <div class="login-error" id="loginError" style="display:none;"></div>
+                <div class="login-error" id="loginError" role="alert" style="display:none;"></div>
                 <button type="submit" class="btn btn-primary login-btn" id="loginBtn">Sign In</button>
             </form>
 
@@ -166,11 +166,11 @@
     </nav>
 
     <!-- Main Content -->
-    <main class="main-content">
+    <main class="main-content" id="mainContent" tabindex="-1">
         <!-- Header -->
         <header class="top-header">
             <div class="header-left">
-                <button class="btn-hamburger" id="btnHamburger">
+                <button class="btn-hamburger" id="btnHamburger" aria-controls="sidebar" aria-expanded="false" aria-label="Toggle navigation">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="3" y1="12" x2="21" y2="12"></line>
                         <line x1="3" y1="6" x2="21" y2="6"></line>
@@ -180,7 +180,7 @@
                 <h1 class="page-title" id="pageTitle">Dashboard</h1>
             </div>
             <div class="header-right">
-                <button class="btn-notification" id="btnHeaderNotif" data-roles="admin team_leader officer">
+                <button class="btn-notification" id="btnHeaderNotif" aria-label="View notifications" data-roles="admin team_leader officer">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
                         <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
@@ -188,7 +188,7 @@
                     <span class="notif-badge" id="headerNotifBadge" style="display:none;">0</span>
                 </button>
                 <div class="user-menu" id="userMenu">
-                    <button class="user-menu-trigger" id="btnUserMenu">
+                    <button class="user-menu-trigger" id="btnUserMenu" aria-label="Account menu">
                         <div class="user-avatar-sm" id="headerAvatar">U</div>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2">
@@ -225,6 +225,7 @@
 
         <!-- Reports Page -->
         <section class="page" id="pageReports">
+            <div id="reportError" class="report-error" role="alert" hidden></div>
             <div class="page-actions" style="justify-content: space-between; margin-bottom: 24px;">
                 <h2 style="margin: 0;">Executive Dashboard</h2>
                 <button class="btn btn-secondary" id="btnExportSLA">
@@ -1805,11 +1806,12 @@
     </div>
 
     <!-- Toast Container -->
-    <div class="toast-container" id="toastContainer"></div>
+    <div class="toast-container" id="toastContainer" role="status" aria-live="polite"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="/js/clientPayloads.js?v=1.0"></script>
     <script src="/js/app.js?v=5.1"></script>
+    <script src="/js/workspace.js"></script>
 </body>
 
 </html>
