@@ -62,7 +62,11 @@ router.get('/count', async (req, res) => {
 // PUT /api/notifications/:id/read
 router.put('/:id/read', async (req, res) => {
     try {
-        await pool.query('UPDATE notifications SET is_read = true WHERE id = $1', [req.params.id]);
+        const result = await pool.query(
+            'UPDATE notifications SET is_read = true WHERE id = $1 AND ($2::boolean OR officer_id = $3) RETURNING id',
+            [req.params.id, ['admin', 'team_leader'].includes(req.user.role), req.user.id]
+        );
+        if (!result.rowCount) return res.status(404).json({ error: 'Notification not found' });
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });

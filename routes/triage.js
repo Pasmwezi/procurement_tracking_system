@@ -269,9 +269,19 @@ router.put('/:id/status', [
 ], async (req, res) => {
     const { status } = req.body;
 
+    const client = await pool.connect();
     try {
-        const existing = await pool.query('SELECT * FROM triage_files WHERE id = $1', [req.params.id]);
-        if (existing.rows.length === 0) return res.status(404).json({ error: 'Triage file not found' });
+        await client.query('BEGIN');
+        const existing = await client.query('SELECT * FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
+        if (existing.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Triage file not found' });
+        }
+        // Linked/terminal records must be changed through their workflow, not intake.
+        if (existing.rows[0].file_id || ['Assigned', 'Awarded', 'Cancelled'].includes(existing.rows[0].status) || ['Assigned', 'Awarded'].includes(status)) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Triage lifecycle transition is not allowed' });
+        }
 
         const oldStatus = existing.rows[0].status;
         const updates = { status };
@@ -287,7 +297,7 @@ router.put('/:id/status', [
         const cancellationReason = (status === 'Cancelled' && req.body.cancellation_reason)
             ? req.body.cancellation_reason : null;
 
-        const result = await pool.query(
+        const result = await client.query(
             `UPDATE triage_files SET status = $1, doc_deadline = COALESCE($2, doc_deadline),
              cancellation_reason = COALESCE($3, cancellation_reason), updated_at = NOW()
              WHERE id = $4 RETURNING *`,
@@ -295,7 +305,7 @@ router.put('/:id/status', [
         );
 
         // Log status change
-        await logStatusChange(pool, req.params.id, oldStatus, status, req.user.id);
+        await logStatusChange(client, req.params.id, oldStatus, status, req.user.id);
         await logAction({
             userId: req.user.id,
             action: 'triage.status_change',
@@ -306,9 +316,13 @@ router.put('/:id/status', [
             ipAddress: req.ip
         });
 
+        await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
+        await client.query('ROLLBACK');
         res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
     }
 });
 
@@ -323,6 +337,16 @@ router.post('/:id/missing-docs', async (req, res) => {
     try {
         await client.query('BEGIN');
 
+        const existing = await client.query('SELECT status, file_id FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
+        if (!existing.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Triage file not found' });
+        }
+        if (existing.rows[0].file_id || !['Triaged', 'Missing Document(s)'].includes(existing.rows[0].status)) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Missing documents cannot be added in the current lifecycle state' });
+        }
+
         const results = [];
         for (const docName of documents) {
             if (!docName || !docName.trim()) continue;
@@ -334,7 +358,6 @@ router.post('/:id/missing-docs', async (req, res) => {
         }
 
         // Update status to Missing Document(s) and set deadline
-        const existing = await client.query('SELECT status FROM triage_files WHERE id = $1', [req.params.id]);
         const oldStatus = existing.rows[0]?.status;
         const deadline = new Date();
         deadline.setDate(deadline.getDate() + 7);
@@ -361,30 +384,40 @@ router.post('/:id/missing-docs', async (req, res) => {
 // PUT /api/triage/:id/missing-docs/:docId — toggle document as provided
 router.put('/:id/missing-docs/:docId', async (req, res) => {
     const { provided } = req.body;
+    const client = await pool.connect();
     try {
-        const result = await pool.query(
+        await client.query('BEGIN');
+        const current = await client.query('SELECT status FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
+        const result = await client.query(
             'UPDATE triage_missing_docs SET provided = $1 WHERE id = $2 AND triage_file_id = $3 RETURNING *',
             [provided !== false, req.params.docId, req.params.id]
         );
-        if (result.rows.length === 0) return res.status(404).json({ error: 'Document not found' });
+        if (result.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Document not found' });
+        }
 
         // Check if all docs are now provided — auto-transition to Triaged
-        const allDocs = await pool.query(
+        const allDocs = await client.query(
             'SELECT * FROM triage_missing_docs WHERE triage_file_id = $1',
             [req.params.id]
         );
         const allProvided = allDocs.rows.length > 0 && allDocs.rows.every(d => d.provided);
-        if (allProvided) {
-            await pool.query(
+        if (allProvided && current.rows[0]?.status === 'Missing Document(s)') {
+            await client.query(
                 'UPDATE triage_files SET status = \'Triaged\', updated_at = NOW() WHERE id = $1',
                 [req.params.id]
             );
-            await logStatusChange(pool, req.params.id, 'Missing Document(s)', 'Triaged', req.user.id, 'All documents provided');
+            await logStatusChange(client, req.params.id, 'Missing Document(s)', 'Triaged', req.user.id, 'All documents provided');
         }
 
+        await client.query('COMMIT');
         res.json({ doc: result.rows[0], all_provided: allProvided });
     } catch (err) {
+        await client.query('ROLLBACK');
         res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
     }
 });
 
@@ -434,9 +467,12 @@ router.post('/:id/assign', [
         await client.query('BEGIN');
 
         // Verify triage file exists and is Triaged
-        const tf = await client.query('SELECT * FROM triage_files WHERE id = $1', [req.params.id]);
+        const tf = await client.query('SELECT * FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
         if (tf.rows.length === 0) throw new Error('Triage file not found');
-        if (tf.rows[0].status !== 'Triaged') throw new Error('Only Triaged files can be assigned');
+        if (tf.rows[0].status !== 'Triaged' || tf.rows[0].file_id) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Only unassigned Triaged files can be assigned' });
+        }
 
         const triageFile = tf.rows[0];
 
@@ -668,6 +704,8 @@ router.post('/import', upload.single('file'), async (req, res) => {
                 continue;
             }
 
+            // Each row and its history commit together; invalid rows are reported as skips.
+            await client.query('SAVEPOINT import_row');
             try {
                 const result = await client.query(
                     `INSERT INTO triage_files (pr_number, title, team_id, estimated_value, business_owner, created_by, status)
@@ -680,8 +718,11 @@ router.post('/import', upload.single('file'), async (req, res) => {
                      VALUES ($1, NULL, 'Triaged', $2, 'Imported from Excel')`,
                     [triageId, req.user.id]
                 );
+                await client.query('RELEASE SAVEPOINT import_row');
                 imported.push({ row: rowNum, pr_number });
             } catch (err) {
+                await client.query('ROLLBACK TO SAVEPOINT import_row');
+                await client.query('RELEASE SAVEPOINT import_row');
                 if (err.code === '23505') {
                     skipped.push({ row: rowNum, pr_number, reason: 'Duplicate PR Number — already exists' });
                 } else {
