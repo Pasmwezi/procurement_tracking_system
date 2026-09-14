@@ -71,20 +71,27 @@ A Dockerized web application for team leaders to track procurement files assigne
 git clone https://github.com/Pasmwezi/procurement_tracking_system.git
 cd procurement_tracking_system
 
+# Configure required secrets without committing them.
+# For a fresh deployment, generate a new DB password. For an existing
+# PostgreSQL volume, preserve the tracker role's current password: changing
+# POSTGRES_PASSWORD alone does not rotate an initialized database.
+export DB_PASSWORD="$(openssl rand -base64 36)"
+export JWT_SECRET="$(openssl rand -hex 32)"
+export ADMIN_INITIAL_EMAIL="admin@example.ca"
+export ADMIN_INITIAL_PASSWORD="$(openssl rand -base64 36)"
+
 # Build and start
 docker compose up --build -d
 ```
 
 The app will be available at **http://localhost:3000**
 
-### Default Credentials
+### Initial Administrator
 
-| Field    | Value      |
-|----------|------------|
-| Username | `admin@filetracker.local` |
-| Password | `admin123`                |
-
-> **Note:** The admin will be prompted to change the password on first login.
+On an empty database, the first administrator is created from
+`ADMIN_INITIAL_EMAIL` and `ADMIN_INITIAL_PASSWORD`. No default account or
+repository-known password exists. Remove those bootstrap variables after the
+administrator has been created.
 
 ### Stopping the App
 
@@ -98,7 +105,7 @@ docker compose down -v     # Stop containers and delete all data
 ## 📖 Usage Guide
 
 ### 1. Sign In
-Navigate to `http://localhost:3000` and log in. The default admin account is `admin@filetracker.local` / `admin123`. The admin will be prompted to set a new password on first login.
+Navigate to `http://localhost:3000` and log in with the administrator credentials supplied during first startup.
 
 ### 2. User & Team Management (Admin)
 Go to **Administration**. Admins can create Teams and add Users, assigning them roles of **Team Leader**, **Officer**, or **Admin**.
@@ -236,14 +243,17 @@ file_tracking/
 
 ## ⚙️ Environment Variables
 
-| Variable        | Default                                                | Description                          |
-|-----------------|--------------------------------------------------------|--------------------------------------|
-| `DATABASE_URL`  | `postgres://tracker:tracker_pass@db:5432/file_tracking`| PostgreSQL connection string         |
-| `JWT_SECRET`    | `file-tracker-secret-key-change-in-production`         | Secret key for JWT signing           |
-| `PORT`          | `3000`                                                 | Server port                          |
-| `NODE_ENV`      | `production`                                           | Node.js environment                  |
+| Variable                 | Required/default | Description                                      |
+|--------------------------|------------------|--------------------------------------------------|
+| `DB_PASSWORD`            | Required         | PostgreSQL service password used by Compose      |
+| `DATABASE_URL`           | Required         | PostgreSQL connection string                     |
+| `JWT_SECRET`             | Required         | Strong, unique JWT signing secret                 |
+| `ADMIN_INITIAL_EMAIL`    | First startup    | Initial administrator email                      |
+| `ADMIN_INITIAL_PASSWORD` | First startup    | Initial administrator password (minimum 12 chars)|
+| `PORT`                   | `3000`           | Server port                                      |
+| `NODE_ENV`               | `production`     | Node.js environment                              |
 
-> **⚠️ Production:** Always set a strong, unique `JWT_SECRET` in your environment.
+> **⚠️ Production:** Keep all secrets outside source control and rotate any value that has been disclosed.
 
 ---
 

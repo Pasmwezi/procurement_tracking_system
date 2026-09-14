@@ -384,7 +384,8 @@ router.post('/email-settings/test', [
     if (!toAddress) return res.status(400).json({ error: 'No email address provided' });
 
     try {
-        await sendTestEmail(toAddress);
+        const sent = await sendTestEmail(toAddress);
+        if (!sent) return res.status(503).json({ error: 'SMTP is not configured; no test email was sent' });
         res.json({ success: true, message: `Test email sent to ${toAddress}` });
     } catch (err) {
         res.status(500).json({ error: `Failed to send test email: ${err.message}` });

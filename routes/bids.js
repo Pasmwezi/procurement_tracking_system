@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
 const { numeric } = require('../services/financialValidation');
+const { canAccessFile } = require('../services/fileAccess');
 
 router.use((req, res, next) => {
     for (const field of ['bid_amount', 'technical_score', 'financial_score']) {
@@ -10,13 +11,6 @@ router.use((req, res, next) => {
     next();
 });
 
-// Helper: verify officer owns the file (or is team_leader)
-async function canAccessFile(user, fileId) {
-    if (user.role !== 'officer') return true;
-    const check = await pool.query('SELECT officer_id FROM files WHERE id = $1', [fileId]);
-    if (check.rows.length === 0) return false;
-    return check.rows[0].officer_id === user.id;
-}
 
 // Helper: verify if file has reached solicitation step
 async function canEnterBids(fileId) {
@@ -29,7 +23,7 @@ async function canEnterBids(fileId) {
     if (fileRes.rows.length === 0 || !fileRes.rows[0].step_order) return false;
     
     const { process_name, step_order } = fileRes.rows[0];
-    if (process_name === 'sole_source') return step_order >= 3;
+    if (process_name.toLowerCase() === 'sole_source') return step_order >= 3;
 
     const solicReq = await pool.query(`
         SELECT COALESCE(MIN(step_order), 999) as min_order
@@ -217,6 +211,10 @@ router.put('/:id/winner', async (req, res) => {
             return res.status(404).json({ error: 'Bid not found' });
         }
         const bid = bidRes.rows[0];
+        if (!(await canAccessFile(req.user, bid.file_id, client))) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Access denied' });
+        }
         if (bid.disqualified || bid.vendor_status === 'Blacklisted' || !numeric(bid.bid_amount)) {
             await client.query('ROLLBACK');
             return res.status(400).json({ error: 'Cannot select an ineligible bid' });
@@ -254,6 +252,9 @@ router.delete('/:id', async (req, res) => {
         return res.status(403).json({ error: 'Only team leaders can delete bids' });
     }
     try {
+        const bid = await pool.query('SELECT file_id FROM bids WHERE id = $1', [req.params.id]);
+        if (!bid.rows.length) return res.status(404).json({ error: 'Bid not found' });
+        if (!(await canAccessFile(req.user, bid.rows[0].file_id))) return res.status(403).json({ error: 'Access denied' });
         const result = await pool.query('DELETE FROM bids WHERE id = $1 RETURNING id', [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Bid not found' });
         res.json({ message: 'Bid deleted' });
@@ -298,6 +299,19 @@ router.get('/evaluate/:file_id', async (req, res) => {
         const allBids = bidsResult.rows;
 
         const method = cfg.basis_of_selection;
+        if (method === 'highest_combined_rating') {
+            const maxPoints = Number(cfg.maximum_technical_points);
+            const invalidTechnical = allBids.find(b => {
+                if (b.disqualified) return false;
+                const score = b.technical_score === null ? null : Number(b.technical_score);
+                return score === null || !Number.isFinite(score) || score < 0 || score > maxPoints;
+            });
+            if (invalidTechnical) {
+                return res.status(400).json({
+                    error: 'Every eligible bid requires a technical score between 0 and maximum_technical_points'
+                });
+            }
+        }
 
         // ---------------------------------------------------------------
         // Step 1: Determine which bids are "responsive"

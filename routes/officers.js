@@ -7,11 +7,12 @@ const { executeFileTransfers } = require('../services/fileTransfers');
 // Team Leaders see all officers (can assign cross-team)
 // Officers see nothing (403 handled by requireRole in server.js, but GET allowed for file forms)
 router.get('/', async (req, res) => {
+    if (req.user.role === 'officer') return res.status(403).json({ error: 'Access denied' });
     try {
         let whereClause = "WHERE u.role = 'officer' AND u.is_active = TRUE";
         const params = [];
 
-        if (req.user.role === 'team_leader' && req.query.team_id === 'me') {
+        if (req.user.role === 'team_leader') {
             params.push(req.user.teamId);
             whereClause += ` AND u.team_id = $${params.length}`;
         }
@@ -45,8 +46,8 @@ router.get('/:id/transfer-candidates', async (req, res) => {
     }
     try {
         const officer = await pool.query(
-            "SELECT id FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE",
-            [officerId]
+            "SELECT id FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE AND team_id = $2",
+            [officerId, req.user.teamId]
         );
         if (officer.rowCount === 0) return res.status(404).json({ error: 'Active officer not found' });
         const files = await pool.query(

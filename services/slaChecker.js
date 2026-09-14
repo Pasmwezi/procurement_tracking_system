@@ -58,7 +58,7 @@ async function checkSLAs() {
   const contractResult = await pool.query(`
     SELECT c.id AS contract_id, c.contract_number, c.contractor_name, 
            COALESCE(c.amended_end_date, c.end_date) AS final_end_date,
-           f.id AS file_id, f.pr_number, f.title, f.officer_id,
+           f.id AS file_id, f.pr_number, f.title, f.officer_id, f.current_step_id,
            u.display_name AS officer_name, u.team_id
     FROM contracts c
     JOIN files f ON f.id = c.file_id
@@ -81,8 +81,8 @@ async function checkSLAs() {
 
       // Assign in-app notification to the officer
       await pool.query(
-        'INSERT INTO notifications (file_id, officer_id, message) VALUES ($1, $2, $3)',
-        [row.file_id, row.officer_id, message]
+        'INSERT INTO notifications (file_id, officer_id, step_id, message) VALUES ($1, $2, $3, $4)',
+        [row.file_id, row.officer_id, row.current_step_id, message]
       );
       
       console.log(`[SLA] Notification created for expiring contract: ${message}`);

@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: tracker
-      POSTGRES_PASSWORD: tracker_pass_12Moitoi2060
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Database password must be set}
       POSTGRES_DB: file_tracking
       TZ: America/Halifax
     ports:
@@ -32,8 +32,10 @@ services:
     ports:
       - "3006:3000"
     environment:
-      DATABASE_URL: postgres://tracker:tracker_pass_12Moitoi2060@db:5432/file_tracking
+      DATABASE_URL: postgres://tracker:${DB_PASSWORD:?Database password must be set}@db:5432/file_tracking
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      ADMIN_INITIAL_EMAIL: ${ADMIN_INITIAL_EMAIL:-}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
       NODE_ENV: production
       TZ: America/Halifax
       SERVER_HTTPS: "true"

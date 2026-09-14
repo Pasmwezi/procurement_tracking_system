@@ -2,19 +2,19 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
 const { numeric } = require('../services/financialValidation');
+const { canAccessFile, canAccessContract } = require('../services/fileAccess');
 
 // Helper: verify user can access a PO (officer on related file or team_leader)
 async function canAccessPO(user, poId) {
-    if (user.role !== 'officer') return true;
     const check = await pool.query(
-        `SELECT f.officer_id FROM purchase_orders po
+        `SELECT f.id AS file_id FROM purchase_orders po
          JOIN contracts c ON c.id = po.contract_id
          JOIN files f ON f.id = c.file_id
          WHERE po.id = $1`,
         [poId]
     );
     if (check.rows.length === 0) return false;
-    return check.rows[0].officer_id === user.id;
+    return canAccessFile(user, check.rows[0].file_id);
 }
 
 // ===== Purchase Orders =====
@@ -24,10 +24,7 @@ router.get('/', async (req, res) => {
     const { contract_id } = req.query;
     if (!contract_id) return res.status(400).json({ error: 'contract_id query param is required' });
     try {
-        if (req.user.role === 'officer') {
-            const owner = await pool.query('SELECT f.officer_id FROM contracts c JOIN files f ON f.id = c.file_id WHERE c.id = $1', [contract_id]);
-            if (owner.rows[0]?.officer_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-        }
+        if (!(await canAccessContract(req.user, contract_id))) return res.status(403).json({ error: 'Access denied' });
         const result = await pool.query(
             `SELECT po.*, u.display_name AS created_by_name,
                     (SELECT COUNT(*) FROM goods_receipts gr WHERE gr.po_id = po.id) AS receipt_count,
@@ -51,15 +48,9 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ error: 'contract_id, po_number, po_date, and amount are required' });
     }
     try {
-        // Verify the contract belongs to a file this user can access
-        if (req.user.role === 'officer') {
-            const check = await pool.query(
-                'SELECT f.officer_id FROM contracts c JOIN files f ON f.id = c.file_id WHERE c.id = $1',
-                [contract_id]
-            );
-            if (check.rows.length === 0 || check.rows[0].officer_id !== req.user.id) {
-                return res.status(403).json({ error: 'Access denied' });
-            }
+        // Verify the contract belongs to a file this user can access.
+        if (!(await canAccessContract(req.user, contract_id))) {
+            return res.status(403).json({ error: 'Access denied' });
         }
         const result = await pool.query(
             `INSERT INTO purchase_orders (contract_id, po_number, po_date, amount, description, created_by)

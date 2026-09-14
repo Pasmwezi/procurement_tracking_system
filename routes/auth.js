@@ -134,13 +134,18 @@ router.post('/refresh', async (req, res) => {
 });
 
 // POST /api/auth/logout
-router.post('/logout', (req, res) => {
-    res.clearCookie('refreshToken', {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict'
-    });
-    res.json({ success: true });
+router.post('/logout', requireAuth, async (req, res) => {
+    try {
+        await pool.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [req.user.id]);
+        res.clearCookie('refreshToken', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict'
+        });
+        res.json({ success: true });
+    } catch (_err) {
+        res.status(500).json({ error: 'Logout failed' });
+    }
 });
 
 // PUT /api/auth/password — change own password (any authenticated user)

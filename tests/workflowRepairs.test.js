@@ -16,14 +16,14 @@ if (!process.env.WORKFLOW_TEST_DATABASE_URL) {
         const r = await fetch(base + path, { method, headers: { 'x-role': role, 'x-id': String(id), ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }) }, body: body instanceof FormData ? body : JSON.stringify(body) });
         return { status: r.status, data: await r.json() };
     };
-    const triage = async status => (await pool.query("INSERT INTO triage_files(pr_number,title,business_owner,status) VALUES ('PR-' || nextval('fixture_seq'),'Fixture','Owner',$1) RETURNING *", [status])).rows[0];
+    const triage = async status => (await pool.query("INSERT INTO triage_files(pr_number,title,business_owner,status,team_id) VALUES ('PR-' || nextval('fixture_seq'),'Fixture','Owner',$1,1) RETURNING *", [status])).rows[0];
     test.before(async () => {
         await pool.query(`CREATE SEQUENCE fixture_seq;
-            CREATE TABLE users(id int PRIMARY KEY, display_name text, email text);
-            INSERT INTO users VALUES (1,'Leader',null),(2,'Officer',null);
+            CREATE TABLE users(id int PRIMARY KEY, display_name text, email text, role text, is_active boolean, team_id int);
+            INSERT INTO users VALUES (1,'Leader',null,'team_leader',true,1),(2,'Officer',null,'officer',true,1);
             CREATE TABLE process_steps(id int PRIMARY KEY, process_name text, step_name text, step_order int, sla_days int);
             INSERT INTO process_steps VALUES(1,'P','Start',1,1);
-            CREATE TABLE files(id serial PRIMARY KEY, pr_number text UNIQUE, title text, process_name text, officer_id int, current_step_id int, step_started_at timestamp, created_at timestamp, estimated_value numeric, status text DEFAULT 'Active');
+            CREATE TABLE files(id serial PRIMARY KEY, pr_number text UNIQUE, title text, process_name text, officer_id int, current_step_id int, step_started_at timestamp, created_at timestamp, estimated_value numeric, status text DEFAULT 'Active', completed_at timestamp);
             CREATE TABLE file_step_log(id serial PRIMARY KEY,file_id int,step_id int,started_at timestamp,completed_at timestamp,sla_met boolean);
             CREATE TABLE triage_files(id serial PRIMARY KEY,pr_number varchar(100) UNIQUE,title text,business_owner text,status text,team_id int,estimated_value numeric,created_by int,file_id int,doc_deadline timestamp,cancellation_reason text,updated_at timestamp);
             CREATE TABLE triage_missing_docs(id serial PRIMARY KEY,triage_file_id int,document_name text,provided boolean DEFAULT false);
@@ -31,7 +31,7 @@ if (!process.env.WORKFLOW_TEST_DATABASE_URL) {
             CREATE TABLE audit_log(user_id int,action text,entity_type text,entity_id int,old_value jsonb,new_value jsonb,ip_address text);
             CREATE TABLE notifications(id serial PRIMARY KEY,officer_id int,is_read boolean DEFAULT false);`);
         const app = express(); app.use(express.json());
-        app.use((req, res, next) => { req.user = { id: Number(req.headers['x-id']), role: req.headers['x-role'] }; next(); });
+        app.use((req, res, next) => { req.user = { id: Number(req.headers['x-id']), role: req.headers['x-role'], teamId: 1 }; next(); });
         app.use('/triage', require('../routes/triage'));
         app.use('/notifications', require('../routes/notifications'));
         server = app.listen(0, '127.0.0.1');

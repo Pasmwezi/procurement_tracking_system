@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const cron = require('node-cron');
 const path = require('path');
 
@@ -16,6 +17,7 @@ const { checkSLAs } = require('./services/slaChecker');
 const vendorsRouter = require('./routes/vendors');
 const bidsRouter = require('./routes/bids');
 const purchaseOrdersRouter = require('./routes/purchaseOrders');
+const reportsRouter = require('./routes/reports');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +25,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Public routes (no auth required)
@@ -52,6 +55,7 @@ app.use('/api/triage', requireAuth, requireRole('admin', 'team_leader'), triageR
 app.use('/api/vendors', requireAuth, requireRole('admin', 'team_leader', 'officer'), vendorsRouter);
 app.use('/api/bids', requireAuth, requireRole('admin', 'team_leader', 'officer'), bidsRouter);
 app.use('/api/purchase-orders', requireAuth, requireRole('admin', 'team_leader', 'officer'), purchaseOrdersRouter);
+app.use('/api/reports', requireAuth, requireRole('admin', 'team_leader'), reportsRouter);
 
 // Manual SLA check trigger (team_leader only)
 app.post('/api/sla-check', requireAuth, requireRole('team_leader'), async (req, res) => {
@@ -210,7 +214,12 @@ async function start() {
             ALTER TABLE files
             ADD COLUMN IF NOT EXISTS estimated_value DECIMAL(15,2),
             ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
-            ADD COLUMN IF NOT EXISTS notes TEXT;
+            ADD COLUMN IF NOT EXISTS notes TEXT,
+            ADD COLUMN IF NOT EXISTS basis_of_selection VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS minimum_points_threshold NUMERIC(10, 4),
+            ADD COLUMN IF NOT EXISTS technical_weight_percent NUMERIC(5, 2),
+            ADD COLUMN IF NOT EXISTS price_weight_percent NUMERIC(5, 2),
+            ADD COLUMN IF NOT EXISTS maximum_technical_points NUMERIC(10, 4);
         `);
         await pool.query(`
             ALTER TABLE triage_files
@@ -293,29 +302,35 @@ async function start() {
         `);
         console.log('✅ Migrations applied');
     } catch (err) {
-        console.error('⚠️ Migration warning:', err.message);
+        console.error('❌ Migration failed:', err.message);
+        process.exit(1);
+        return;
     }
 
-    // Seed default App Admin account
+    // Bootstrap the first administrator only from operator-supplied credentials.
     try {
         const bcrypt = require('bcryptjs');
-        const existing = await pool.query(
-            "SELECT id, password_hash FROM users WHERE email = $1 AND role = 'admin'",
-            ['admin@filetracker.local']
-        );
+        const existing = await pool.query("SELECT id, password_hash FROM users WHERE role = 'admin' ORDER BY id LIMIT 1");
+        const initialEmail = process.env.ADMIN_INITIAL_EMAIL;
+        const initialPassword = process.env.ADMIN_INITIAL_PASSWORD;
         if (existing.rows.length === 0) {
-            const hash = await bcrypt.hash('admin123', 10);
+            if (!initialEmail || !initialPassword || initialPassword.length < 12) {
+                throw new Error('ADMIN_INITIAL_EMAIL and ADMIN_INITIAL_PASSWORD (minimum 12 characters) are required for first startup');
+            }
+            const hash = await bcrypt.hash(initialPassword, 10);
             await pool.query(
                 "INSERT INTO users (email, password_hash, display_name, role) VALUES ($1, $2, $3, 'admin')",
-                ['admin@filetracker.local', hash, 'App Administrator']
+                [initialEmail.toLowerCase().trim(), hash, 'App Administrator']
             );
-            console.log('✅ Default admin created (admin@filetracker.local / admin123)');
+            console.log('✅ Initial administrator created');
         } else {
-            // Verify hash is valid bcrypt, re-hash if not
             const row = existing.rows[0];
             const isValid = row.password_hash && row.password_hash.startsWith('$2');
             if (!isValid) {
-                const hash = await bcrypt.hash('admin123', 10);
+                if (!initialPassword || initialPassword.length < 12) {
+                    throw new Error('ADMIN_INITIAL_PASSWORD (minimum 12 characters) is required to initialize the existing administrator');
+                }
+                const hash = await bcrypt.hash(initialPassword, 10);
                 await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, row.id]);
                 console.log('✅ Admin password hash refreshed');
             } else {
@@ -323,7 +338,9 @@ async function start() {
             }
         }
     } catch (err) {
-        console.error('⚠️ Admin seed warning:', err.message);
+        console.error('❌ Administrator initialization failed:', err.message);
+        process.exit(1);
+        return;
     }
 
     app.listen(PORT,'0.0.0.0', () => {

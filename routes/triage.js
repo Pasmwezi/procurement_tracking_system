@@ -31,6 +31,20 @@ async function logStatusChange(dbOrPool, triageFileId, fromStatus, toStatus, cha
     );
 }
 
+router.param('id', async (req, res, next, id) => {
+    if (req.user.role !== 'team_leader') return next();
+    try {
+        const result = await pool.query('SELECT team_id FROM triage_files WHERE id = $1', [id]);
+        if (!result.rows.length) return res.status(404).json({ error: 'Triage file not found' });
+        if (!req.user.teamId || result.rows[0].team_id !== req.user.teamId) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        next();
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // GET /api/triage — list triage files (scoped to team leader's team)
 router.get('/', [
     query('page').optional().isInt({ min: 1 }).toInt(),
@@ -53,8 +67,8 @@ router.get('/', [
         const params = [];
         const conditions = [];
 
-        // Scope to team leader's team by default
-        if (req.query.team_id === 'me' && req.user.teamId) {
+        // Team leaders are always scoped to their own team; admins can see all.
+        if (req.user.role === 'team_leader' && req.user.teamId) {
             params.push(req.user.teamId);
             conditions.push(`tf.team_id = $${params.length}`);
         }
@@ -213,7 +227,7 @@ router.post('/', [
             [
                 pr_number,
                 title,
-                team_id || req.user.teamId || null,
+                req.user.role === 'team_leader' ? req.user.teamId : (team_id || null),
                 estimated_value || null,
                 business_owner,
                 req.user.id
@@ -423,32 +437,38 @@ router.put('/:id/missing-docs/:docId', async (req, res) => {
 
 // DELETE /api/triage/:id/missing-docs/:docId — remove a missing doc
 router.delete('/:id/missing-docs/:docId', async (req, res) => {
+    const client = await pool.connect();
     try {
-        await pool.query(
+        await client.query('BEGIN');
+        const cur = await client.query('SELECT status FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
+        await client.query(
             'DELETE FROM triage_missing_docs WHERE id = $1 AND triage_file_id = $2',
             [req.params.docId, req.params.id]
         );
 
         // Check remaining docs
-        const remaining = await pool.query(
+        const remaining = await client.query(
             'SELECT * FROM triage_missing_docs WHERE triage_file_id = $1',
             [req.params.id]
         );
         // If no docs left, transition back to Triaged
         if (remaining.rows.length === 0) {
-            const cur = await pool.query('SELECT status FROM triage_files WHERE id = $1', [req.params.id]);
             if (cur.rows[0]?.status === 'Missing Document(s)') {
-                await pool.query(
+                await client.query(
                     'UPDATE triage_files SET status = \'Triaged\', updated_at = NOW() WHERE id = $1',
                     [req.params.id]
                 );
-                await logStatusChange(pool, req.params.id, 'Missing Document(s)', 'Triaged', req.user.id, 'All missing documents removed');
+                await logStatusChange(client, req.params.id, 'Missing Document(s)', 'Triaged', req.user.id, 'All missing documents removed');
             }
         }
 
+        await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {
+        await client.query('ROLLBACK');
         res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
     }
 });
 
@@ -476,6 +496,15 @@ router.post('/:id/assign', [
 
         const triageFile = tf.rows[0];
 
+        const officer = await client.query(
+            "SELECT id, display_name FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE AND team_id = $2",
+            [officer_id, triageFile.team_id]
+        );
+        if (!officer.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Officer must be active and belong to the intake team' });
+        }
+
         // Get process steps
         const stepsResult = await client.query(
             'SELECT * FROM process_steps WHERE process_name = $1 ORDER BY step_order',
@@ -487,15 +516,22 @@ router.post('/:id/assign', [
         const startDate = assigned_date
             ? new Date(assigned_date.includes('T') ? assigned_date : `${assigned_date}T12:00:00`)
             : new Date();
-        const targetOrder = current_step_order ? parseInt(current_step_order) : 1;
-        const targetStep = allSteps.find(s => s.step_order === targetOrder) || allSteps[0];
+        const targetOrder = current_step_order !== null && current_step_order !== undefined
+            ? parseInt(current_step_order) : allSteps[0].step_order;
+        const targetStep = allSteps.find(s => s.step_order === targetOrder);
+        if (!targetStep) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Invalid current_step_order for the selected process' });
+        }
+        const isTerminalStep = targetStep.step_order === allSteps[allSteps.length - 1].step_order;
         const stepStartedAt = targetOrder <= 1 ? startDate : new Date();
 
         // Create the file in the files table (copy estimated_value from triage)
         const fileResult = await client.query(
-            `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at, estimated_value)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-            [triageFile.pr_number, triageFile.title, process_name, officer_id, targetStep.id, stepStartedAt, startDate, triageFile.estimated_value || null]
+            `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at, estimated_value, status, completed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+            [triageFile.pr_number, triageFile.title, process_name, officer_id, targetStep.id, stepStartedAt, startDate,
+                triageFile.estimated_value || null, isTerminalStep ? 'Completed' : 'Active', isTerminalStep ? stepStartedAt : null]
         );
         const file = fileResult.rows[0];
 
@@ -513,18 +549,18 @@ router.post('/:id/assign', [
                         [file.id, step.id, stepStart, stepEnd]
                     );
                 } else if (step.step_order === targetOrder) {
-                    await client.query(
-                        'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
-                        [file.id, step.id, stepStartedAt]
-                    );
+                    await client.query(isTerminalStep
+                        ? 'INSERT INTO file_step_log (file_id, step_id, started_at, completed_at, sla_met) VALUES ($1, $2, $3, $3, TRUE)'
+                        : 'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
+                    [file.id, step.id, stepStartedAt]);
                     break;
                 }
             }
         } else {
-            await client.query(
-                'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
-                [file.id, allSteps[0].id, startDate]
-            );
+            await client.query(isTerminalStep
+                ? 'INSERT INTO file_step_log (file_id, step_id, started_at, completed_at, sla_met) VALUES ($1, $2, $3, $3, TRUE)'
+                : 'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
+            [file.id, allSteps[0].id, startDate]);
         }
 
         // Update triage file status to Assigned and link to file
@@ -534,9 +570,8 @@ router.post('/:id/assign', [
         );
 
         // Log assignment
-        const officerName = await client.query('SELECT display_name FROM users WHERE id = $1', [officer_id]);
         await logStatusChange(client, req.params.id, 'Triaged', 'Assigned', req.user.id,
-            `Assigned to ${officerName.rows[0]?.display_name || 'officer'} (${process_name.replace(/_/g, ' ')})`);
+            `Assigned to ${officer.rows[0].display_name} (${process_name.replace(/_/g, ' ')})`);
 
         const awardedTriageIds = await syncTriageAwardStatus(client, {
             fileId: file.id,

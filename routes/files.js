@@ -7,6 +7,16 @@ const { validateRequest } = require('../middleware/validate');
 const { logAction } = require('../services/auditLogger');
 const { syncTriageAwardStatus, syncTriageCancellationStatus } = require('../services/triageProgress');
 const { lockActiveFileForAdvancement, updateActiveFileProgress } = require('../services/fileLifecycle');
+const { canAccessFile, canAccessContract } = require('../services/fileAccess');
+
+router.param('id', async (req, res, next, id) => {
+    try {
+        if (!(await canAccessFile(req.user, id))) return res.status(403).json({ error: 'Access denied' });
+        next();
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // GET /api/files — list files with role-based scoping
 // Team Leader: all files (can assign cross-team)
@@ -41,8 +51,8 @@ router.get('/', [
             // Officers see only their own files
             params.push(req.user.id);
             conditions.push(`f.officer_id = $${params.length}`);
-        } else if (req.user.role === 'team_leader' && req.query.team_id === 'me') {
-            // Team Leaders see their team unless looking at all teams
+        } else if (req.user.role === 'team_leader') {
+            // Team leaders are always scoped to their team.
             params.push(req.user.teamId);
             conditions.push(`u.team_id = $${params.length}`);
         }
@@ -116,7 +126,7 @@ router.get('/stats/summary', async (req, res) => {
         if (req.user.role === 'officer') {
             scopeWhere = 'WHERE f.officer_id = $1';
             scopeParams = [req.user.id];
-        } else if (req.user.role === 'team_leader' && req.query.team_id === 'me') {
+        } else if (req.user.role === 'team_leader') {
             scopeJoin = 'JOIN users u ON u.id = f.officer_id';
             scopeWhere = 'WHERE u.team_id = $1';
             scopeParams = [req.user.teamId];
@@ -158,10 +168,8 @@ router.get('/stats/summary', async (req, res) => {
         if (req.user.role === 'team_leader') {
             let byOfficerWhere = "WHERE u.role = 'officer' AND u.is_active = TRUE";
             const boParams = [];
-            if (req.query.team_id === 'me') {
-                boParams.push(req.user.teamId);
-                byOfficerWhere += ` AND u.team_id = $${boParams.length}`;
-            }
+            boParams.push(req.user.teamId);
+            byOfficerWhere += ` AND u.team_id = $${boParams.length}`;
             byOfficer = await pool.query(`
           SELECT u.id, u.display_name AS officer_name, u.team_id,
                  COUNT(f.id) AS file_count,
@@ -311,18 +319,37 @@ router.post('/', [
         if (stepsResult.rows.length === 0) throw new Error('Invalid process');
 
         const allSteps = stepsResult.rows;
+        const officerResult = await client.query(
+            "SELECT id, team_id FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE",
+            [officer_id]
+        );
+        if (!officerResult.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'officer_id must identify an active officer' });
+        }
+        if (req.user.teamId && officerResult.rows[0].team_id !== req.user.teamId) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Officer must belong to your team' });
+        }
         const startDate = assigned_date
             ? new Date(assigned_date.includes('T') ? assigned_date : `${assigned_date}T12:00:00`)
             : new Date();
-        const targetOrder = current_step_order ? parseInt(current_step_order) : 1;
-        const targetStep = allSteps.find(s => s.step_order === targetOrder) || allSteps[0];
+        const targetOrder = current_step_order !== null && current_step_order !== undefined
+            ? parseInt(current_step_order) : allSteps[0].step_order;
+        const targetStep = allSteps.find(s => s.step_order === targetOrder);
+        if (!targetStep) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Invalid current_step_order for the selected process' });
+        }
+        const isTerminalStep = targetStep.step_order === allSteps[allSteps.length - 1].step_order;
 
         const stepStartedAt = targetOrder <= 1 ? startDate : new Date();
 
         const fileResult = await client.query(
-            `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at, estimated_value)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-            [pr_number, title, process_name, officer_id, targetStep.id, stepStartedAt, startDate, estimated_value || null]
+            `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at, estimated_value, status, completed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+            [pr_number, title, process_name, officer_id, targetStep.id, stepStartedAt, startDate,
+                estimated_value ?? null, isTerminalStep ? 'Completed' : 'Active', isTerminalStep ? stepStartedAt : null]
         );
         const file = fileResult.rows[0];
 
@@ -341,23 +368,28 @@ router.post('/', [
                         [file.id, step.id, stepStart, stepEnd]
                     );
                 } else if (step.step_order === targetOrder) {
-                    await client.query(
-                        'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
-                        [file.id, step.id, stepStartedAt]
-                    );
+                    if (isTerminalStep) {
+                        await client.query(
+                            'INSERT INTO file_step_log (file_id, step_id, started_at, completed_at, sla_met) VALUES ($1, $2, $3, $3, TRUE)',
+                            [file.id, step.id, stepStartedAt]
+                        );
+                    } else {
+                        await client.query(
+                            'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
+                            [file.id, step.id, stepStartedAt]
+                        );
+                    }
                     break;
                 }
             }
         } else {
-            await client.query(
-                'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
-                [file.id, allSteps[0].id, startDate]
-            );
+            await client.query(isTerminalStep
+                ? 'INSERT INTO file_step_log (file_id, step_id, started_at, completed_at, sla_met) VALUES ($1, $2, $3, $3, TRUE)'
+                : 'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
+            [file.id, allSteps[0].id, startDate]);
         }
 
-        await client.query('COMMIT');
-
-        const fullFile = await pool.query(`
+        const fullFile = await client.query(`
       SELECT f.*, u.display_name AS officer_name, ps.step_name AS current_step_name
       FROM files f
       JOIN users u ON u.id = f.officer_id
@@ -374,8 +406,12 @@ router.post('/', [
             entityType: 'file',
             entityId: file.id,
             newValue: { pr_number, title, process_name, officer_id, estimated_value },
-            ipAddress: req.ip
+            ipAddress: req.ip,
+            db: client,
+            required: true
         });
+
+        await client.query('COMMIT');
 
         res.status(201).json(createdFile);
 
@@ -638,7 +674,7 @@ router.get('/export', async (req, res) => {
         const params = [];
         const conditions = [];
 
-        if (req.query.team_id === 'me' && req.user.teamId) {
+        if (req.user.teamId) {
             params.push(req.user.teamId);
             conditions.push(`u.team_id = $${params.length}`);
         }
@@ -724,7 +760,8 @@ router.post('/import', uploadFiles.single('file'), async (req, res) => {
 
     // Pre-fetch lookup caches
     const officersRes = await pool.query(
-        "SELECT id, display_name FROM users WHERE role = 'officer' AND is_active = TRUE"
+        "SELECT id, display_name FROM users WHERE role = 'officer' AND is_active = TRUE AND team_id = $1",
+        [req.user.teamId]
     );
     const officerMap = {};
     for (const o of officersRes.rows) officerMap[o.display_name.toLowerCase()] = o.id;
@@ -807,15 +844,22 @@ router.post('/import', uploadFiles.single('file'), async (req, res) => {
                 continue;
             }
 
-            const targetOrder = row.step_order ? parseInt(row.step_order) || 1 : 1;
-            const targetStep = allSteps.find(s => s.step_order === targetOrder) || allSteps[0];
+            const targetOrder = row.step_order ? parseInt(row.step_order) : allSteps[0].step_order;
+            const targetStep = allSteps.find(s => s.step_order === targetOrder);
+            if (!targetStep) {
+                summary.skipped++;
+                summary.details.skipped.push({ row: row.rowNum, pr_number: row.pr_number, reason: 'Invalid starting step for selected process' });
+                continue;
+            }
+            const isTerminalStep = targetStep.step_order === allSteps[allSteps.length - 1].step_order;
             const stepStartedAt = targetOrder <= 1 ? startDate : new Date();
 
             // Insert file
             const fileResult = await client.query(
-                `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-                [row.pr_number, row.title, realProcess, officerId, targetStep.id, stepStartedAt, startDate]
+                `INSERT INTO files (pr_number, title, process_name, officer_id, current_step_id, step_started_at, created_at, status, completed_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+                [row.pr_number, row.title, realProcess, officerId, targetStep.id, stepStartedAt, startDate,
+                    isTerminalStep ? 'Completed' : 'Active', isTerminalStep ? stepStartedAt : null]
             );
             const file = fileResult.rows[0];
 
@@ -833,18 +877,18 @@ router.post('/import', uploadFiles.single('file'), async (req, res) => {
                             [file.id, step.id, s, e]
                         );
                     } else if (step.step_order === targetOrder) {
-                        await client.query(
-                            'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
-                            [file.id, step.id, stepStartedAt]
-                        );
+                        await client.query(isTerminalStep
+                            ? 'INSERT INTO file_step_log (file_id, step_id, started_at, completed_at, sla_met) VALUES ($1, $2, $3, $3, TRUE)'
+                            : 'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
+                        [file.id, step.id, stepStartedAt]);
                         break;
                     }
                 }
             } else {
-                await client.query(
-                    'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
-                    [file.id, allSteps[0].id, startDate]
-                );
+                await client.query(isTerminalStep
+                    ? 'INSERT INTO file_step_log (file_id, step_id, started_at, completed_at, sla_met) VALUES ($1, $2, $3, $3, TRUE)'
+                    : 'INSERT INTO file_step_log (file_id, step_id, started_at) VALUES ($1, $2, $3)',
+                [file.id, allSteps[0].id, startDate]);
             }
 
             summary.imported++;
@@ -940,6 +984,9 @@ router.put('/contracts/:contractId/amend', async (req, res) => {
     }
 
     try {
+        if (!(await canAccessContract(req.user, req.params.contractId))) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
         let query = 'UPDATE contracts SET amended_end_date = $1';
         const params = [amended_end_date];
         

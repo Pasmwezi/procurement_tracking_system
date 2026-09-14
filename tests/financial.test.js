@@ -26,13 +26,14 @@ if (!process.env.FINANCIAL_TEST_DATABASE_URL) {
         for (const match of source.matchAll(/await pool\.query\(`([\s\S]*?)`\)/g)) {
             if (/^\s*(CREATE TABLE|ALTER TABLE)/.test(match[1])) await pool.query(match[1]);
         }
-        await pool.query("INSERT INTO users(id,email,display_name,role) VALUES (901,'financial@example.test','Financial','officer'),(902,'other-financial@example.test','Other','officer')");
+        await pool.query("INSERT INTO teams(id,name) VALUES (901,'Financial Team'),(902,'Other Team') ON CONFLICT DO NOTHING");
+        await pool.query("INSERT INTO users(id,email,display_name,role,team_id) VALUES (901,'financial@example.test','Financial','officer',901),(902,'other-financial@example.test','Other','officer',902)");
         await pool.query("INSERT INTO files(id,pr_number,title,process_name,officer_id,current_step_id,status,basis_of_selection) SELECT 901,'FIN-1','Financial',process_name,901,id,'Completed','lowest_price' FROM process_steps WHERE step_name ILIKE '%solicit%' AND step_name NOT ILIKE '%drafting%' LIMIT 1");
         await pool.query("INSERT INTO files(id,pr_number,title,process_name,officer_id,status) SELECT 902,'FIN-2','Other',process_name,902,'Completed' FROM files WHERE id=901");
         await pool.query("INSERT INTO contracts(id,file_id,contract_number,start_date,end_date) VALUES(901,901,'FIN-C1','2026-01-01','2026-12-01'),(902,902,'FIN-C2','2026-01-01','2026-12-01')");
         await pool.query("INSERT INTO purchase_orders(id,contract_id,po_number,po_date,amount) VALUES(901,901,'FIN-PO1','2026-01-01',100),(902,902,'FIN-PO2','2026-01-01',100)");
         const app = express(); app.use(express.json());
-        app.use((req, res, next) => { req.user = { id: 901, role: req.headers['x-role'] }; next(); });
+        app.use((req, res, next) => { req.user = { id: 901, role: req.headers['x-role'], teamId: 901 }; next(); });
         app.use('/bids', require('../routes/bids'));
         app.use('/po', require('../routes/purchaseOrders'));
         app.use('/files', require('../routes/files'));

@@ -1,7 +1,11 @@
 const { Pool } = require('pg');
 
+if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required');
+}
+
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgres://tracker:tracker_pass@localhost:5432/file_tracking',
+    connectionString: process.env.DATABASE_URL,
 });
 
 module.exports = pool;

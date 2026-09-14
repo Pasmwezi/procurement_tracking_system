@@ -12,9 +12,9 @@ const pool = require('../db/pool');
  * @param {Object} [params.newValue] - new state (optional)
  * @param {string} [params.ipAddress] - IP address of the requester (optional)
  */
-async function logAction({ userId, action, entityType, entityId, oldValue = null, newValue = null, ipAddress = null }) {
+async function logAction({ userId, action, entityType, entityId, oldValue = null, newValue = null, ipAddress = null, db = pool, required = false }) {
     try {
-        await pool.query(`
+        await db.query(`
             INSERT INTO audit_log 
             (user_id, action, entity_type, entity_id, old_value, new_value, ip_address)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -29,7 +29,7 @@ async function logAction({ userId, action, entityType, entityId, oldValue = null
         ]);
     } catch (err) {
         console.error('[Audit Logger] Failed to insert audit log:', err.message);
-        // Do not throw; we typically don't want an audit log failure to break the main request
+        if (required) throw err;
     }
 }
 

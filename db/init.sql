@@ -83,9 +83,6 @@ CREATE INDEX idx_files_status ON files(status);
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_users_team ON users(team_id);
 
--- Default App Admin: email=admin@filetracker.local, password set by server at startup
-INSERT INTO users (email, password_hash, display_name, role)
-VALUES ('admin@filetracker.local', 'NEEDS_REHASH', 'App Administrator', 'admin');
 
 -- =============================================
 -- Seed data: Processes
