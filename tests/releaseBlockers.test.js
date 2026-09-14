@@ -45,7 +45,24 @@ test('all file creation paths preserve terminal-step and transactional audit sem
 test('evaluation rejects missing and excessive technical scores', () => {
     const bids = read('routes/bids.js');
     assert.match(bids, /score === null[\s\S]*score > maxPoints/);
-    assert.match(bids, /technical score between 0 and maximum_technical_points/);
+    assert.match(bids, /lowest_price_per_point', 'highest_combined_rating/);
+    assert.match(bids, /score > maxPoints/);
+});
+
+test('remaining team-scoped mutations and transactional audits are enforced', () => {
+    const officers = read('routes/officers.js');
+    const transfers = read('services/fileTransfers.js');
+    const notifications = read('routes/notifications.js');
+    const invoices = read('routes/purchaseOrders.js');
+    const files = read('routes/files.js');
+    const triage = read('routes/triage.js');
+    assert.match(officers, /team_id = \$2[\s\S]*NOT EXISTS/);
+    assert.match(transfers, /team_id = \$2 FOR SHARE/);
+    assert.match(notifications, /u\.team_id/);
+    assert.match(invoices, /canAccessPO\(req\.user, invoice\.rows\[0\]\.po_id, client\)/);
+    assert.match(invoices, /Paid: \['Paid'\]/);
+    assert.match(files, /file\.advance[\s\S]*db: client,[\s\S]*required: true[\s\S]*COMMIT/);
+    assert.ok((triage.match(/db: client,[\s\S]{0,80}required: true/g) || []).length >= 2);
 });
 
 test('compose passes bootstrap values and migration failures terminate startup', () => {
@@ -53,5 +70,6 @@ test('compose passes bootstrap values and migration failures terminate startup',
     const server = read('server.js');
     assert.match(compose, /ADMIN_INITIAL_EMAIL:/);
     assert.match(compose, /ADMIN_INITIAL_PASSWORD:/);
+    assert.match(read('README.md'), /openssl rand -hex 32/);
     assert.match(server, /Migration failed:[\s\S]*process\.exit\(1\)/);
 });

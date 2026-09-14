@@ -38,7 +38,7 @@ function normalizeTransfers(fromOfficerId, transfers) {
     });
 }
 
-async function executeFileTransfers(pool, { fromOfficerId, transfers, userId, ipAddress = null }) {
+async function executeFileTransfers(pool, { fromOfficerId, transfers, userId, teamId, ipAddress = null }) {
     const sourceId = positiveInteger(fromOfficerId, 'Source officer ID');
     const normalized = normalizeTransfers(sourceId, transfers);
     const fileIds = normalized.map(item => item.fileId);
@@ -51,16 +51,16 @@ async function executeFileTransfers(pool, { fromOfficerId, transfers, userId, ip
         transactionStarted = true;
 
         const sourceResult = await client.query(
-            "SELECT id, email, display_name AS name FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE FOR SHARE",
-            [sourceId]
+            "SELECT id, email, display_name AS name FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE AND team_id = $2 FOR SHARE",
+            [sourceId, teamId]
         );
         if (sourceResult.rowCount === 0) {
             throw new TransferValidationError('Source officer was not found or is inactive', 404);
         }
 
         const targetResult = await client.query(
-            "SELECT id, email, display_name AS name FROM users WHERE id = ANY($1::int[]) AND role = 'officer' AND is_active = TRUE FOR SHARE",
-            [targetIds]
+            "SELECT id, email, display_name AS name FROM users WHERE id = ANY($1::int[]) AND role = 'officer' AND is_active = TRUE AND team_id = $2 FOR SHARE",
+            [targetIds, teamId]
         );
         const targetsById = new Map(targetResult.rows.map(row => [row.id, row]));
         if (targetsById.size !== targetIds.length) {

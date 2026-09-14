@@ -518,9 +518,7 @@ router.put('/:id/advance', [
             ipAddress: req.ip
         });
 
-        await client.query('COMMIT');
-
-        const updatedFile = await pool.query(`
+        const updatedFile = await client.query(`
       SELECT f.*, u.display_name AS officer_name, ps.step_name AS current_step_name, ps.sla_days, ps.step_order,
              (SELECT COUNT(*) FROM process_steps WHERE process_name = f.process_name) AS total_steps,
              (
@@ -547,8 +545,12 @@ router.put('/:id/advance', [
              entityType: 'file',
              entityId: file.id,
              newValue: { new_step_id: next.id, comment },
-             ipAddress: req.ip
+             ipAddress: req.ip,
+             db: client,
+             required: true
         });
+
+        await client.query('COMMIT');
 
         res.json(updatedFile.rows[0]);
     } catch (err) {

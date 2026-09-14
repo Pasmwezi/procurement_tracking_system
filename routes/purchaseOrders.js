@@ -5,8 +5,8 @@ const { numeric } = require('../services/financialValidation');
 const { canAccessFile, canAccessContract } = require('../services/fileAccess');
 
 // Helper: verify user can access a PO (officer on related file or team_leader)
-async function canAccessPO(user, poId) {
-    const check = await pool.query(
+async function canAccessPO(user, poId, db = pool) {
+    const check = await db.query(
         `SELECT f.id AS file_id FROM purchase_orders po
          JOIN contracts c ON c.id = po.contract_id
          JOIN files f ON f.id = c.file_id
@@ -14,7 +14,7 @@ async function canAccessPO(user, poId) {
         [poId]
     );
     if (check.rows.length === 0) return false;
-    return canAccessFile(user, check.rows[0].file_id);
+    return canAccessFile(user, check.rows[0].file_id, db);
 }
 
 // ===== Purchase Orders =====
@@ -194,17 +194,40 @@ router.put('/invoices/:invoiceId/status', async (req, res) => {
     if (!['Approved', 'Rejected', 'Paid', 'Pending'].includes(status)) {
         return res.status(400).json({ error: 'Invalid status. Must be one of: Pending, Approved, Rejected, Paid' });
     }
+    const client = await pool.connect();
     try {
-        const paid_date = status === 'Paid' ? new Date().toISOString().split('T')[0] : null;
-        const result = await pool.query(
-            `UPDATE invoices SET status = $1, paid_date = COALESCE($2, paid_date)
-             WHERE id = $3 RETURNING *`,
-            [status, paid_date, req.params.invoiceId]
+        await client.query('BEGIN');
+        const invoice = await client.query('SELECT id, po_id, status FROM invoices WHERE id = $1 FOR UPDATE', [req.params.invoiceId]);
+        if (!invoice.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Invoice not found' });
+        }
+        if (!(await canAccessPO(req.user, invoice.rows[0].po_id, client))) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        const allowed = {
+            Pending: ['Pending', 'Approved', 'Rejected'],
+            Approved: ['Approved', 'Paid', 'Rejected'],
+            Rejected: ['Rejected'],
+            Paid: ['Paid']
+        };
+        if (!allowed[invoice.rows[0].status]?.includes(status)) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: `Cannot transition invoice from ${invoice.rows[0].status} to ${status}` });
+        }
+        const result = await client.query(
+            `UPDATE invoices SET status = $1::varchar, paid_date = CASE WHEN $1::varchar = 'Paid' THEN CURRENT_DATE ELSE NULL END
+             WHERE id = $2 RETURNING *`,
+            [status, req.params.invoiceId]
         );
-        if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+        await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
+        await client.query('ROLLBACK');
         res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
     }
 });
 

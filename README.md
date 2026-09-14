@@ -75,7 +75,7 @@ cd procurement_tracking_system
 # For a fresh deployment, generate a new DB password. For an existing
 # PostgreSQL volume, preserve the tracker role's current password: changing
 # POSTGRES_PASSWORD alone does not rotate an initialized database.
-export DB_PASSWORD="$(openssl rand -base64 36)"
+export DB_PASSWORD="$(openssl rand -hex 32)"
 export JWT_SECRET="$(openssl rand -hex 32)"
 export ADMIN_INITIAL_EMAIL="admin@example.ca"
 export ADMIN_INITIAL_PASSWORD="$(openssl rand -base64 36)"

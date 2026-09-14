@@ -327,7 +327,9 @@ router.put('/:id/status', [
             entityId: req.params.id,
             oldValue: { status: oldStatus },
             newValue: { status },
-            ipAddress: req.ip
+            ipAddress: req.ip,
+            db: client,
+            required: true
         });
 
         await client.query('COMMIT');
@@ -401,7 +403,15 @@ router.put('/:id/missing-docs/:docId', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const current = await client.query('SELECT status FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
+        const current = await client.query('SELECT status, file_id FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
+        if (!current.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Triage file not found' });
+        }
+        if (current.rows[0].file_id || !['Triaged', 'Missing Document(s)'].includes(current.rows[0].status)) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Missing documents cannot be changed in the current lifecycle state' });
+        }
         const result = await client.query(
             'UPDATE triage_missing_docs SET provided = $1 WHERE id = $2 AND triage_file_id = $3 RETURNING *',
             [provided !== false, req.params.docId, req.params.id]
@@ -440,7 +450,15 @@ router.delete('/:id/missing-docs/:docId', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const cur = await client.query('SELECT status FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
+        const cur = await client.query('SELECT status, file_id FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
+        if (!cur.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Triage file not found' });
+        }
+        if (cur.rows[0].file_id || !['Triaged', 'Missing Document(s)'].includes(cur.rows[0].status)) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Missing documents cannot be changed in the current lifecycle state' });
+        }
         await client.query(
             'DELETE FROM triage_missing_docs WHERE id = $1 AND triage_file_id = $2',
             [req.params.docId, req.params.id]
@@ -587,7 +605,9 @@ router.post('/:id/assign', [
             entityType: 'file',
             entityId: file.id,
             newValue: { pr_number: triageFile.pr_number, officer_id, process_name },
-            ipAddress: req.ip
+            ipAddress: req.ip,
+            db: client,
+            required: true
         });
 
         await client.query('COMMIT');

@@ -20,7 +20,7 @@ if (!process.env.WORKFLOW_TEST_DATABASE_URL) {
     test.before(async () => {
         await pool.query(`CREATE SEQUENCE fixture_seq;
             CREATE TABLE users(id int PRIMARY KEY, display_name text, email text, role text, is_active boolean, team_id int);
-            INSERT INTO users VALUES (1,'Leader',null,'team_leader',true,1),(2,'Officer',null,'officer',true,1);
+            INSERT INTO users VALUES (1,'Leader',null,'team_leader',true,1),(2,'Officer',null,'officer',true,1),(3,'Other',null,'officer',true,2);
             CREATE TABLE process_steps(id int PRIMARY KEY, process_name text, step_name text, step_order int, sla_days int);
             INSERT INTO process_steps VALUES(1,'P','Start',1,1);
             CREATE TABLE files(id serial PRIMARY KEY, pr_number text UNIQUE, title text, process_name text, officer_id int, current_step_id int, step_started_at timestamp, created_at timestamp, estimated_value numeric, status text DEFAULT 'Active', completed_at timestamp);
@@ -93,6 +93,10 @@ if (!process.env.WORKFLOW_TEST_DATABASE_URL) {
         assert.equal((await req(`/notifications/${n.id}/read`, 'PUT', {}, 'officer', 2)).status, 200);
         assert.equal((await req(`/notifications/${n.id}/read`, 'PUT', {})).status, 200);
         assert.equal((await req('/notifications/999999/read', 'PUT', {})).status, 404);
+        const other = (await pool.query('INSERT INTO notifications(officer_id) VALUES(3) RETURNING id')).rows[0];
+        assert.equal((await req(`/notifications/${other.id}/read`, 'PUT', {})).status, 404);
+        await req('/notifications/read-all', 'PUT', {});
+        assert.equal((await pool.query('SELECT is_read FROM notifications WHERE id=$1', [other.id])).rows[0].is_read, false);
     });
     test('import skips a failed row without rolling back reported successes', async () => {
         const wb = XLSX.utils.book_new();
@@ -110,8 +114,15 @@ if (!process.env.WORKFLOW_TEST_DATABASE_URL) {
         const t = await triage('Missing Document(s)');
         const d = (await pool.query("INSERT INTO triage_missing_docs(triage_file_id,document_name) VALUES($1,'Doc') RETURNING id", [t.id])).rows[0];
         assert.equal((await req(`/triage/${t.id}/status`, 'PUT', { status: 'Cancelled' })).status, 200);
-        await req(`/triage/${t.id}/missing-docs/${d.id}`, 'PUT', { provided: true });
+        assert.equal((await req(`/triage/${t.id}/missing-docs/${d.id}`, 'PUT', { provided: true })).status, 409);
         assert.equal((await pool.query('SELECT status FROM triage_files WHERE id=$1', [t.id])).rows[0].status, 'Cancelled');
         assert.equal((await pool.query("SELECT * FROM triage_status_history WHERE triage_file_id=$1 AND to_status='Triaged'", [t.id])).rowCount, 0);
+    });
+    test('terminal triage documents cannot be toggled or deleted', async () => {
+        const t = await triage('Cancelled');
+        const doc = await pool.query("INSERT INTO triage_missing_docs(triage_file_id,document_name) VALUES($1,'Historical') RETURNING id", [t.id]);
+        assert.equal((await req(`/triage/${t.id}/missing-docs/${doc.rows[0].id}`, 'PUT', { provided: true })).status, 409);
+        assert.equal((await req(`/triage/${t.id}/missing-docs/${doc.rows[0].id}`, 'DELETE', {})).status, 409);
+        assert.equal((await pool.query('SELECT provided FROM triage_missing_docs WHERE id=$1', [doc.rows[0].id])).rows[0].provided, false);
     });
 }

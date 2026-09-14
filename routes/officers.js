@@ -94,11 +94,14 @@ router.delete('/:id', async (req, res) => {
     }
 
     try {
-        const filesCheck = await pool.query('SELECT COUNT(*) FROM files WHERE officer_id = $1', [req.params.id]);
-        if (parseInt(filesCheck.rows[0].count) > 0) {
-            return res.status(400).json({ error: 'Cannot delete officer with assigned files' });
-        }
-        await pool.query("UPDATE users SET is_active = FALSE WHERE id = $1 AND role = 'officer'", [req.params.id]);
+        const result = await pool.query(
+            `UPDATE users SET is_active = FALSE
+             WHERE id = $1 AND role = 'officer' AND team_id = $2
+               AND NOT EXISTS (SELECT 1 FROM files WHERE officer_id = users.id)
+             RETURNING id`,
+            [req.params.id, req.user.teamId]
+        );
+        if (!result.rowCount) return res.status(409).json({ error: 'Officer is outside your team, missing, or still has assigned files' });
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -116,6 +119,7 @@ router.put('/:id/transfer', async (req, res) => {
             fromOfficerId: req.params.id,
             transfers: req.body.transfers,
             userId: req.user.id,
+            teamId: req.user.teamId,
             ipAddress: req.ip
         });
         const grouped = {};

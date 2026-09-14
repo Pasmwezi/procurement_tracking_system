@@ -75,6 +75,23 @@ if (!process.env.FINANCIAL_TEST_DATABASE_URL) {
         }
         assert.equal((await request('/files/901/basis-of-selection', 'PUT', config, 'team_leader')).status, 200);
     });
+    test('point-based evaluation rejects scores above the configured/default maximum', async () => {
+        await pool.query("UPDATE files SET basis_of_selection='lowest_price_per_point', maximum_technical_points=NULL, minimum_points_threshold=0 WHERE id=901");
+        await pool.query('UPDATE bids SET technical_score=101, disqualified=FALSE WHERE file_id=901');
+        assert.equal((await request('/bids/evaluate/901')).status, 400);
+    });
+    test('invoice status is team-scoped and paid invoices cannot be reopened', async () => {
+        const own = await pool.query("INSERT INTO invoices(contract_id,po_id,invoice_number,invoice_date,amount,status) VALUES(901,901,'OWN-I','2026-01-01',10,'Pending') RETURNING id");
+        const other = await pool.query("INSERT INTO invoices(contract_id,po_id,invoice_number,invoice_date,amount,status) VALUES(902,902,'OTHER-I','2026-01-01',10,'Pending') RETURNING id");
+        assert.equal((await request(`/po/invoices/${other.rows[0].id}/status`, 'PUT', { status: 'Approved' }, 'team_leader')).status, 403);
+        const approved = await request(`/po/invoices/${own.rows[0].id}/status`, 'PUT', { status: 'Approved' }, 'team_leader');
+        assert.equal(approved.status, 200, JSON.stringify(approved.data));
+        assert.equal((await request(`/po/invoices/${own.rows[0].id}/status`, 'PUT', { status: 'Paid' }, 'team_leader')).status, 200);
+        assert.equal((await request(`/po/invoices/${own.rows[0].id}/status`, 'PUT', { status: 'Pending' }, 'team_leader')).status, 409);
+        const state = (await pool.query('SELECT status, paid_date FROM invoices WHERE id=$1', [own.rows[0].id])).rows[0];
+        assert.equal(state.status, 'Paid');
+        assert.ok(state.paid_date);
+    });
     test('PO collection requires file ownership', async () => {
         assert.equal((await request('/po?contract_id=902')).status, 403);
         assert.equal((await request('/po?contract_id=901')).status, 200);

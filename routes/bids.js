@@ -299,8 +299,9 @@ router.get('/evaluate/:file_id', async (req, res) => {
         const allBids = bidsResult.rows;
 
         const method = cfg.basis_of_selection;
-        if (method === 'highest_combined_rating') {
-            const maxPoints = Number(cfg.maximum_technical_points);
+        if (['lowest_price_per_point', 'highest_combined_rating'].includes(method)) {
+            const configuredMax = Number(cfg.maximum_technical_points);
+            const maxPoints = Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 100;
             const invalidTechnical = allBids.find(b => {
                 if (b.disqualified) return false;
                 const score = b.technical_score === null ? null : Number(b.technical_score);
@@ -308,7 +309,7 @@ router.get('/evaluate/:file_id', async (req, res) => {
             });
             if (invalidTechnical) {
                 return res.status(400).json({
-                    error: 'Every eligible bid requires a technical score between 0 and maximum_technical_points'
+                    error: `Every eligible bid requires a technical score between 0 and ${maxPoints}`
                 });
             }
         }

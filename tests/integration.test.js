@@ -29,7 +29,8 @@ if (!connectionString) {
                 display_name TEXT NOT NULL,
                 email TEXT NOT NULL,
                 role TEXT NOT NULL,
-                is_active BOOLEAN NOT NULL DEFAULT TRUE
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                team_id INTEGER
             );
             CREATE TABLE processes (name TEXT PRIMARY KEY);
             CREATE TABLE process_steps (
@@ -101,10 +102,11 @@ if (!connectionString) {
 
     test('executeFileTransfers atomically transfers active files, alerts, and audit history', async () => {
         await pool.query('TRUNCATE audit_log, notifications, file_step_log, files, process_steps, processes, users RESTART IDENTITY CASCADE');
-        const users = await pool.query(`INSERT INTO users(display_name,email,role,is_active) VALUES
-            ('Source','source@example.test','officer',TRUE),
-            ('Target','target@example.test','officer',TRUE),
-            ('Admin','admin@example.test','admin',TRUE)
+        const users = await pool.query(`INSERT INTO users(display_name,email,role,is_active,team_id) VALUES
+            ('Source','source@example.test','officer',TRUE,1),
+            ('Target','target@example.test','officer',TRUE,1),
+            ('Outsider','outsider@example.test','officer',TRUE,2),
+            ('Admin','admin@example.test','admin',TRUE,NULL)
             RETURNING id`);
         await pool.query("INSERT INTO processes(name) VALUES ('P')");
         const step = await pool.query("INSERT INTO process_steps(process_name,step_name,sla_days,cum_days,step_order) VALUES ('P','Start',0,0,1) RETURNING id");
@@ -115,6 +117,7 @@ if (!connectionString) {
             fromOfficerId: users.rows[0].id,
             transfers: [{ file_id: file.rows[0].id, to_officer_id: users.rows[1].id }],
             userId: 99,
+            teamId: 1,
             ipAddress: '127.0.0.1'
         });
 
@@ -134,7 +137,21 @@ if (!connectionString) {
         await assert.rejects(() => executeFileTransfers(pool, {
             fromOfficerId: source.rows[0].id,
             transfers: [{ file_id: file.rows[0].id, to_officer_id: admin.rows[0].id }],
-            userId: 99
+            userId: 99,
+            teamId: 1
+        }), /active officer/i);
+        assert.equal((await pool.query('SELECT officer_id FROM files WHERE id=$1', [file.rows[0].id])).rows[0].officer_id, file.rows[0].officer_id);
+    });
+
+    test('executeFileTransfers rejects cross-team targets without partial updates', async () => {
+        const source = await pool.query("SELECT id FROM users WHERE email='source@example.test'");
+        const outsider = await pool.query("SELECT id FROM users WHERE email='outsider@example.test'");
+        const file = await pool.query("SELECT id, officer_id FROM files WHERE pr_number='PR-1'");
+        await assert.rejects(() => executeFileTransfers(pool, {
+            fromOfficerId: source.rows[0].id,
+            transfers: [{ file_id: file.rows[0].id, to_officer_id: outsider.rows[0].id }],
+            userId: 99,
+            teamId: 1
         }), /active officer/i);
         assert.equal((await pool.query('SELECT officer_id FROM files WHERE id=$1', [file.rows[0].id])).rows[0].officer_id, file.rows[0].officer_id);
     });
