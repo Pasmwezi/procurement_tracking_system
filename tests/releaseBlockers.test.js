@@ -56,13 +56,28 @@ test('remaining team-scoped mutations and transactional audits are enforced', ()
     const invoices = read('routes/purchaseOrders.js');
     const files = read('routes/files.js');
     const triage = read('routes/triage.js');
-    assert.match(officers, /team_id = \$2[\s\S]*NOT EXISTS/);
+    assert.match(officers, /team_id = \$2 FOR UPDATE/);
     assert.match(transfers, /team_id = \$2 FOR SHARE/);
     assert.match(notifications, /u\.team_id/);
     assert.match(invoices, /canAccessPO\(req\.user, invoice\.rows\[0\]\.po_id, client\)/);
     assert.match(invoices, /Paid: \['Paid'\]/);
     assert.match(files, /file\.advance[\s\S]*db: client,[\s\S]*required: true[\s\S]*COMMIT/);
     assert.ok((triage.match(/db: client,[\s\S]{0,80}required: true/g) || []).length >= 2);
+});
+
+test('legacy admin, nullable leaders, UI invoice path, and assignment locks fail closed', () => {
+    const server = read('server.js');
+    const auth = read('middleware/auth.js');
+    const files = read('routes/files.js');
+    const triage = read('routes/triage.js');
+    const app = read('public/js/app.js');
+    assert.match(server, /usesLegacyPassword[\s\S]*unsafe legacy administrator credential/);
+    assert.match(auth, /team_leader'[\s\S]*!req\.user\.teamId[\s\S]*Team assignment required/);
+    assert.match(app, /\/api\/purchase-orders\/invoices\/\$\{invoiceId\}\/status/);
+    assert.match(files, /role = 'officer' AND is_active = TRUE FOR SHARE/);
+    assert.match(files, /team_id = \$1 FOR SHARE/);
+    assert.match(triage, /team_id = \$2 FOR SHARE/);
+    assert.match(triage, /Linked or terminal triage records cannot be edited/);
 });
 
 test('compose passes bootstrap values and migration failures terminate startup', () => {

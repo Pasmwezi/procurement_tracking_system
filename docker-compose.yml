@@ -7,8 +7,6 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Database password must be set}
       POSTGRES_DB: file_tracking
       TZ: America/Halifax
-    ports:
-      - "5445:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql

@@ -46,6 +46,9 @@ function requireRole(...roles) {
         if (!req.user || !roles.includes(req.user.role)) {
             return res.status(403).json({ error: 'Insufficient permissions' });
         }
+        if (req.user.role === 'team_leader' && !req.user.teamId) {
+            return res.status(403).json({ error: 'Team assignment required' });
+        }
         next();
     };
 }

@@ -125,4 +125,9 @@ if (!process.env.WORKFLOW_TEST_DATABASE_URL) {
         assert.equal((await req(`/triage/${t.id}/missing-docs/${doc.rows[0].id}`, 'DELETE', {})).status, 409);
         assert.equal((await pool.query('SELECT provided FROM triage_missing_docs WHERE id=$1', [doc.rows[0].id])).rows[0].provided, false);
     });
+    test('terminal triage metadata is immutable', async () => {
+        const t = await triage('Cancelled');
+        assert.equal((await req(`/triage/${t.id}`, 'PUT', { title: 'Rewritten history' })).status, 409);
+        assert.equal((await pool.query('SELECT title FROM triage_files WHERE id=$1', [t.id])).rows[0].title, 'Fixture');
+    });
 }

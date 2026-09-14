@@ -255,8 +255,19 @@ router.post('/', [
 // PUT /api/triage/:id — update triage file info
 router.put('/:id', async (req, res) => {
     const { pr_number, title, estimated_value, business_owner, notes } = req.body;
+    const client = await pool.connect();
     try {
-        const result = await pool.query(
+        await client.query('BEGIN');
+        const current = await client.query('SELECT * FROM triage_files WHERE id = $1 FOR UPDATE', [req.params.id]);
+        if (!current.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Triage file not found' });
+        }
+        if (current.rows[0].file_id || ['Assigned', 'Awarded', 'Cancelled'].includes(current.rows[0].status)) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Linked or terminal triage records cannot be edited' });
+        }
+        const result = await client.query(
             `UPDATE triage_files SET
                 pr_number = COALESCE($1, pr_number),
                 title = COALESCE($2, title),
@@ -267,11 +278,25 @@ router.put('/:id', async (req, res) => {
              WHERE id = $6 RETURNING *`,
             [pr_number, title, estimated_value, business_owner, notes, req.params.id]
         );
-        if (result.rows.length === 0) return res.status(404).json({ error: 'Triage file not found' });
+        await logAction({
+            userId: req.user.id,
+            action: 'triage.update',
+            entityType: 'triage_file',
+            entityId: req.params.id,
+            oldValue: current.rows[0],
+            newValue: result.rows[0],
+            ipAddress: req.ip,
+            db: client,
+            required: true
+        });
+        await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
+        await client.query('ROLLBACK');
         if (err.code === '23505') return res.status(409).json({ error: 'PR Number already exists' });
         res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
     }
 });
 
@@ -515,7 +540,7 @@ router.post('/:id/assign', [
         const triageFile = tf.rows[0];
 
         const officer = await client.query(
-            "SELECT id, display_name FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE AND team_id = $2",
+            "SELECT id, display_name FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE AND team_id = $2 FOR SHARE",
             [officer_id, triageFile.team_id]
         );
         if (!officer.rows.length) {

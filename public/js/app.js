@@ -4561,7 +4561,7 @@ window.loadInvoices = async function(poId, contractId, isLeader) {
 
 window.changeInvoiceStatus = async function(invoiceId, status, poId, contractId) {
     try {
-        await api(`/api/invoices/${invoiceId}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
+        await api(`/api/purchase-orders/invoices/${invoiceId}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
         showToast('Invoice status updated');
         // Refresh invoice list
         const isLeader = currentUser.role === 'team_leader';

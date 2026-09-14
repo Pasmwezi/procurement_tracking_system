@@ -320,7 +320,7 @@ router.post('/', [
 
         const allSteps = stepsResult.rows;
         const officerResult = await client.query(
-            "SELECT id, team_id FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE",
+            "SELECT id, team_id FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE FOR SHARE",
             [officer_id]
         );
         if (!officerResult.rows.length) {
@@ -760,13 +760,9 @@ router.post('/import', uploadFiles.single('file'), async (req, res) => {
         };
     });
 
-    // Pre-fetch lookup caches
-    const officersRes = await pool.query(
-        "SELECT id, display_name FROM users WHERE role = 'officer' AND is_active = TRUE AND team_id = $1",
-        [req.user.teamId]
-    );
-    const officerMap = {};
-    for (const o of officersRes.rows) officerMap[o.display_name.toLowerCase()] = o.id;
+    // Officer rows are loaded and locked inside the import transaction so
+    // deactivation cannot race an assignment.
+    let officerMap;
 
     const processesRes = await pool.query(
         'SELECT DISTINCT process_name FROM process_steps'
@@ -778,6 +774,12 @@ router.post('/import', uploadFiles.single('file'), async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        const officersRes = await client.query(
+            "SELECT id, display_name FROM users WHERE role = 'officer' AND is_active = TRUE AND team_id = $1 FOR SHARE",
+            [req.user.teamId]
+        );
+        officerMap = {};
+        for (const officer of officersRes.rows) officerMap[officer.display_name.toLowerCase()] = officer.id;
 
         for (const row of parsed) {
             // Validate required fields

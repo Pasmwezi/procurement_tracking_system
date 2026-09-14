@@ -156,6 +156,33 @@ if (!connectionString) {
         assert.equal((await pool.query('SELECT officer_id FROM files WHERE id=$1', [file.rows[0].id])).rows[0].officer_id, file.rows[0].officer_id);
     });
 
+    test('assignment row lock prevents concurrent officer deactivation', async () => {
+        const officer = await pool.query("INSERT INTO users(display_name,email,role,is_active,team_id) VALUES('Race','race@example.test','officer',TRUE,1) RETURNING id");
+        await pool.query("INSERT INTO processes(name) VALUES('RaceProcess') ON CONFLICT DO NOTHING");
+        const step = await pool.query("INSERT INTO process_steps(process_name,step_name,sla_days,cum_days,step_order) VALUES('RaceProcess','Start',0,0,1) RETURNING id");
+        const assignment = await pool.connect();
+        const deactivation = await pool.connect();
+        try {
+            await assignment.query('BEGIN');
+            await assignment.query("SELECT id FROM users WHERE id=$1 AND role='officer' AND is_active=TRUE FOR SHARE", [officer.rows[0].id]);
+            await deactivation.query('BEGIN');
+            let deactivationLocked = false;
+            const waiting = deactivation.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [officer.rows[0].id]).then(() => { deactivationLocked = true; });
+            await new Promise(resolve => setTimeout(resolve, 50));
+            assert.equal(deactivationLocked, false);
+            await assignment.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES('RACE-ASSIGN','Race','RaceProcess',$1,$2,'Active')", [officer.rows[0].id, step.rows[0].id]);
+            await assignment.query('COMMIT');
+            await waiting;
+            const assigned = await deactivation.query('SELECT 1 FROM files WHERE officer_id=$1 LIMIT 1', [officer.rows[0].id]);
+            assert.equal(assigned.rowCount, 1);
+            await deactivation.query('ROLLBACK');
+            assert.equal((await pool.query('SELECT is_active FROM users WHERE id=$1', [officer.rows[0].id])).rows[0].is_active, true);
+        } finally {
+            assignment.release();
+            deactivation.release();
+        }
+    });
+
     test('replaceProcessSteps safely reorders referenced steps and recalculates cumulative SLA', async () => {
         await pool.query('TRUNCATE audit_log, notifications, file_step_log, files, process_steps, processes RESTART IDENTITY CASCADE');
         await pool.query("INSERT INTO processes(name) VALUES ('Editable')");

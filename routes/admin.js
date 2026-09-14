@@ -130,24 +130,34 @@ router.delete('/users/:id', [
         return res.status(400).json({ error: 'Cannot deactivate your own account' });
     }
 
+    const client = await pool.connect();
     try {
-        // Check for active files
-        const filesCheck = await pool.query(
+        await client.query('BEGIN');
+        const user = await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+        if (!user.rowCount) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const filesCheck = await client.query(
             "SELECT COUNT(*) FROM files WHERE officer_id = $1 AND status = 'Active'",
             [userId]
         );
         if (parseInt(filesCheck.rows[0].count) > 0) {
+            await client.query('ROLLBACK');
             return res.status(400).json({ error: 'Cannot deactivate user with active files. Transfer files first.' });
         }
 
-        const result = await pool.query(
-            'UPDATE users SET is_active = FALSE, updated_at = NOW() WHERE id = $1 RETURNING id',
+        await client.query(
+            'UPDATE users SET is_active = FALSE, updated_at = NOW() WHERE id = $1',
             [userId]
         );
-        if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {
+        await client.query('ROLLBACK');
         res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
     }
 });
 

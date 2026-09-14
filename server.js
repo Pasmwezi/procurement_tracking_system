@@ -310,7 +310,7 @@ async function start() {
     // Bootstrap the first administrator only from operator-supplied credentials.
     try {
         const bcrypt = require('bcryptjs');
-        const existing = await pool.query("SELECT id, password_hash FROM users WHERE role = 'admin' ORDER BY id LIMIT 1");
+        const existing = await pool.query("SELECT id, password_hash FROM users WHERE role = 'admin' AND is_active = TRUE ORDER BY id");
         const initialEmail = process.env.ADMIN_INITIAL_EMAIL;
         const initialPassword = process.env.ADMIN_INITIAL_PASSWORD;
         if (existing.rows.length === 0) {
@@ -319,20 +319,28 @@ async function start() {
             }
             const hash = await bcrypt.hash(initialPassword, 10);
             await pool.query(
-                "INSERT INTO users (email, password_hash, display_name, role) VALUES ($1, $2, $3, 'admin')",
+                "INSERT INTO users (email, password_hash, display_name, role, password_changed) VALUES ($1, $2, $3, 'admin', TRUE)",
                 [initialEmail.toLowerCase().trim(), hash, 'App Administrator']
             );
             console.log('✅ Initial administrator created');
         } else {
-            const row = existing.rows[0];
-            const isValid = row.password_hash && row.password_hash.startsWith('$2');
-            if (!isValid) {
+            const legacyPassword = ['admin', '123'].join('');
+            const unsafeAdmins = [];
+            for (const row of existing.rows) {
+                const isValidHash = row.password_hash && row.password_hash.startsWith('$2');
+                const usesLegacyPassword = isValidHash && await bcrypt.compare(legacyPassword, row.password_hash);
+                if (!isValidHash || usesLegacyPassword) unsafeAdmins.push(row.id);
+            }
+            if (unsafeAdmins.length > 0) {
                 if (!initialPassword || initialPassword.length < 12) {
-                    throw new Error('ADMIN_INITIAL_PASSWORD (minimum 12 characters) is required to initialize the existing administrator');
+                    throw new Error('ADMIN_INITIAL_PASSWORD (minimum 12 characters) is required to replace an unsafe legacy administrator credential');
                 }
                 const hash = await bcrypt.hash(initialPassword, 10);
-                await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, row.id]);
-                console.log('✅ Admin password hash refreshed');
+                await pool.query(
+                    'UPDATE users SET password_hash = $1, password_changed = TRUE WHERE id = ANY($2::int[])',
+                    [hash, unsafeAdmins]
+                );
+                console.log('✅ Unsafe administrator credential replaced');
             } else {
                 console.log('✅ Admin account ready');
             }

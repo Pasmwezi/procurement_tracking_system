@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 process.env.JWT_SECRET = crypto.randomBytes(48).toString('hex');
 const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const originalQuery = pool.query;
 after(() => { pool.query = originalQuery; });
 async function authenticate(claims, version = 0) {
@@ -21,4 +21,11 @@ test('revoked access credentials are rejected, current version works', async () 
 });
 test('refresh credentials cannot authorize protected resources', async () => {
     assert.deepEqual(await authenticate({ isRefresh: true }), { status: 401, allowed: false });
+});
+test('team leaders without a team fail closed at role boundaries', () => {
+    let status = 200;
+    let allowed = false;
+    const res = { status(n) { status = n; return this; }, json() {} };
+    requireRole('team_leader')({ user: { id: 1, role: 'team_leader', teamId: null } }, res, () => { allowed = true; });
+    assert.deepEqual({ status, allowed }, { status: 403, allowed: false });
 });
