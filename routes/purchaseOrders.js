@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
+const { numeric } = require('../services/financialValidation');
 
 // Helper: verify user can access a PO (officer on related file or team_leader)
 async function canAccessPO(user, poId) {
-    if (user.role === 'team_leader') return true;
+    if (user.role !== 'officer') return true;
     const check = await pool.query(
         `SELECT f.officer_id FROM purchase_orders po
          JOIN contracts c ON c.id = po.contract_id
@@ -23,6 +24,10 @@ router.get('/', async (req, res) => {
     const { contract_id } = req.query;
     if (!contract_id) return res.status(400).json({ error: 'contract_id query param is required' });
     try {
+        if (req.user.role === 'officer') {
+            const owner = await pool.query('SELECT f.officer_id FROM contracts c JOIN files f ON f.id = c.file_id WHERE c.id = $1', [contract_id]);
+            if (owner.rows[0]?.officer_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        }
         const result = await pool.query(
             `SELECT po.*, u.display_name AS created_by_name,
                     (SELECT COUNT(*) FROM goods_receipts gr WHERE gr.po_id = po.id) AS receipt_count,
@@ -42,7 +47,7 @@ router.get('/', async (req, res) => {
 // POST /api/purchase-orders — create PO (officer or team_leader)
 router.post('/', async (req, res) => {
     const { contract_id, po_number, po_date, amount, description } = req.body;
-    if (!contract_id || !po_number || !po_date || !amount) {
+    if (!contract_id || !po_number || !po_date || !numeric(amount, 0, true)) {
         return res.status(400).json({ error: 'contract_id, po_number, po_date, and amount are required' });
     }
     try {
@@ -75,6 +80,7 @@ router.put('/:id', async (req, res) => {
             return res.status(403).json({ error: 'Access denied' });
         }
         const { po_number, po_date, amount, description, status } = req.body;
+        if (amount !== undefined && !numeric(amount, 0, true)) return res.status(400).json({ error: 'amount must be positive and finite' });
         const result = await pool.query(
             `UPDATE purchase_orders SET
                 po_number = COALESCE($1, po_number),
@@ -168,14 +174,14 @@ router.post('/:id/invoices', async (req, res) => {
             return res.status(403).json({ error: 'Access denied' });
         }
         const { contract_id, invoice_number, invoice_date, amount, due_date, notes } = req.body;
-        if (!invoice_number || !invoice_date || !amount) {
+        if (!invoice_number || !invoice_date || !numeric(amount, 0, true)) {
             return res.status(400).json({ error: 'invoice_number, invoice_date, and amount are required' });
         }
-        // Resolve contract_id from PO if not provided
-        let resolvedContractId = contract_id;
-        if (!resolvedContractId) {
-            const poRes = await pool.query('SELECT contract_id FROM purchase_orders WHERE id = $1', [req.params.id]);
-            if (poRes.rows.length > 0) resolvedContractId = poRes.rows[0].contract_id;
+        const poRes = await pool.query('SELECT contract_id FROM purchase_orders WHERE id = $1', [req.params.id]);
+        if (!poRes.rows.length) return res.status(404).json({ error: 'PO not found' });
+        const resolvedContractId = poRes.rows[0].contract_id;
+        if (contract_id !== null && contract_id !== undefined && String(contract_id) !== String(resolvedContractId)) {
+            return res.status(400).json({ error: 'Invoice contract must match the purchase order contract' });
         }
         const result = await pool.query(
             `INSERT INTO invoices (contract_id, po_id, invoice_number, invoice_date, amount, due_date, notes, created_by)

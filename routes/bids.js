@@ -1,10 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
+const { numeric } = require('../services/financialValidation');
+
+router.use((req, res, next) => {
+    for (const field of ['bid_amount', 'technical_score', 'financial_score']) {
+        if (req.body?.[field] !== null && req.body?.[field] !== undefined && !numeric(req.body[field])) return res.status(400).json({ error: `${field} must be nonnegative and finite` });
+    }
+    next();
+});
 
 // Helper: verify officer owns the file (or is team_leader)
 async function canAccessFile(user, fileId) {
-    if (user.role === 'team_leader') return true;
+    if (user.role !== 'officer') return true;
     const check = await pool.query('SELECT officer_id FROM files WHERE id = $1', [fileId]);
     if (check.rows.length === 0) return false;
     return check.rows[0].officer_id === user.id;
@@ -112,8 +120,8 @@ router.post('/', async (req, res) => {
                 disqualified, disqualification_reason, notes, created_by)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
             [file_id, vendor_id || null, vendor_name_free || null,
-             submission_date || null, bid_amount || null,
-             technical_score || null, financial_score || null,
+             submission_date || null, bid_amount ?? null,
+             technical_score ?? null, financial_score ?? null,
              disqualified || false, disqualification_reason || null,
              notes || null, req.user.id]
         );
@@ -161,6 +169,11 @@ router.put('/:id', async (req, res) => {
             }
         }
 
+        if (vendor_id) {
+            const vendor = await pool.query('SELECT status FROM vendors WHERE id=$1', [vendor_id]);
+            if (!vendor.rows.length || vendor.rows[0].status === 'Blacklisted') return res.status(400).json({ error: 'Vendor is not eligible' });
+        }
+        if (bid.is_winner && disqualified === true) return res.status(400).json({ error: 'Cannot disqualify the selected winner' });
         const result = await pool.query(
             `UPDATE bids SET
                 vendor_id = COALESCE($1, vendor_id),
@@ -194,7 +207,7 @@ router.put('/:id/winner', async (req, res) => {
         await client.query('BEGIN');
 
         const bidRes = await client.query(
-            `SELECT b.*, v.name AS vendor_name FROM bids b
+            `SELECT b.*, v.name AS vendor_name, v.status AS vendor_status FROM bids b
              LEFT JOIN vendors v ON v.id = b.vendor_id
              WHERE b.id = $1`,
             [req.params.id]
@@ -204,6 +217,10 @@ router.put('/:id/winner', async (req, res) => {
             return res.status(404).json({ error: 'Bid not found' });
         }
         const bid = bidRes.rows[0];
+        if (bid.disqualified || bid.vendor_status === 'Blacklisted' || !numeric(bid.bid_amount)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Cannot select an ineligible bid' });
+        }
         const winnerName = bid.vendor_name || bid.vendor_name_free;
 
         // Clear any previous winner for this file
@@ -294,7 +311,8 @@ router.get('/evaluate/:file_id', async (req, res) => {
             const bid_amount = b.bid_amount !== null ? parseFloat(b.bid_amount) : null;
             const technical_score = b.technical_score !== null ? parseFloat(b.technical_score) : null;
 
-            let responsive = !b.disqualified;
+            let responsive = !b.disqualified && b.vendor_status !== 'Blacklisted' && numeric(b.bid_amount);
+            if (method === 'highest_combined_rating' && !numeric(b.bid_amount, 0, true)) responsive = false;
             let non_responsive_reason = b.disqualified ? (b.disqualification_reason || 'Disqualified') : null;
 
             // Point-threshold check for point-based methods

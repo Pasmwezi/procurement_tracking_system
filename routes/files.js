@@ -864,6 +864,11 @@ router.post('/import', uploadFiles.single('file'), async (req, res) => {
 // GET /api/files/:id/contracts — get all contracts for a file
 router.get('/:id/contracts', async (req, res) => {
     try {
+        if (req.user.role === 'officer') {
+            const owner = await pool.query('SELECT officer_id FROM files WHERE id = $1', [req.params.id]);
+            if (!owner.rows.length) return res.status(404).json({ error: 'File not found' });
+            if (owner.rows[0].officer_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        }
         const result = await pool.query(
             'SELECT * FROM contracts WHERE file_id = $1 ORDER BY created_at ASC',
             [req.params.id]
@@ -889,6 +894,9 @@ router.post('/:id/contracts', [
     }
 
     const { contract_number, start_date, end_date, has_options, number_of_options, contractor_name } = req.body;
+    if (new Date(end_date) < new Date(start_date)) {
+        return res.status(400).json({ error: 'Contract end date cannot be before its start date' });
+    }
 
     try {
         // Verify file is completed
@@ -974,11 +982,16 @@ router.put('/:id/basis-of-selection', async (req, res) => {
         if (technical_weight_percent === null || technical_weight_percent === undefined || price_weight_percent === null || price_weight_percent === undefined) {
             return res.status(400).json({ error: 'technical_weight_percent and price_weight_percent are required for highest_combined_rating' });
         }
-        const sum = parseFloat(technical_weight_percent) + parseFloat(price_weight_percent);
+        const technicalWeight = Number(technical_weight_percent);
+        const priceWeight = Number(price_weight_percent);
+        if (!Number.isFinite(technicalWeight) || !Number.isFinite(priceWeight) || technicalWeight < 0 || technicalWeight > 100 || priceWeight < 0 || priceWeight > 100) {
+            return res.status(400).json({ error: 'technical_weight_percent and price_weight_percent must each be between 0 and 100' });
+        }
+        const sum = technicalWeight + priceWeight;
         if (Math.abs(sum - 100) > 0.01) {
             return res.status(400).json({ error: 'technical_weight_percent and price_weight_percent must sum to 100' });
         }
-        if (maximum_technical_points === null || maximum_technical_points === undefined || parseFloat(maximum_technical_points) <= 0) {
+        if (maximum_technical_points === null || maximum_technical_points === undefined || !Number.isFinite(Number(maximum_technical_points)) || Number(maximum_technical_points) <= 0) {
             return res.status(400).json({ error: 'maximum_technical_points is required and must be > 0 for highest_combined_rating' });
         }
     }
@@ -987,6 +1000,11 @@ router.put('/:id/basis-of-selection', async (req, res) => {
     if (['lowest_price_per_point', 'highest_combined_rating'].includes(basis_of_selection)) {
         if (minimum_points_threshold === null || minimum_points_threshold === undefined) {
             return res.status(400).json({ error: 'minimum_points_threshold is required for point-based selection methods' });
+        }
+        const threshold = Number(minimum_points_threshold);
+        const maximum = basis_of_selection === 'highest_combined_rating' ? Number(maximum_technical_points) : 100;
+        if (!Number.isFinite(threshold) || threshold < 0 || threshold > maximum) {
+            return res.status(400).json({ error: `minimum_points_threshold must be between 0 and ${maximum}` });
         }
     }
 
