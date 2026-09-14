@@ -18,6 +18,7 @@ CREATE TABLE users (
     role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'team_leader', 'officer')),
     team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
     password_changed BOOLEAN DEFAULT FALSE,
+    token_version INTEGER NOT NULL DEFAULT 0,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()

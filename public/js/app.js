@@ -299,7 +299,7 @@ function navigateTo(page) {
     if (navEl) navEl.classList.add('active');
     if (page === 'dashboard' && currentUser) {
         const roleLbl = { admin: 'Admin', team_leader: 'Team Leader', officer: 'Officer' }[currentUser.role] || currentUser.role;
-        $('#pageTitle').innerHTML = `Dashboard <span class="title-role-badge">${roleLbl}</span>`;
+        $('#pageTitle').innerHTML = `Dashboard <span class="title-role-badge">${escapeHtml(roleLbl)}</span>`;
     } else {
         $('#pageTitle').textContent = pageTitles[page] || page;
     }
@@ -437,7 +437,7 @@ async function loadDashboard() {
                 return `
                 <div class="officer-bar">
                     <div class="officer-bar-info">
-                        <div class="officer-bar-avatar">${initials(o.officer_name)}</div>
+                        <div class="officer-bar-avatar">${escapeHtml(initials(o.officer_name))}</div>
                         <span class="officer-bar-name">${escHtml(o.officer_name)}</span>
                     </div>
                     <div class="officer-bar-track">
@@ -467,10 +467,10 @@ async function loadDashboard() {
                 return `
                 <div class="process-bar">
                     <div class="process-bar-header">
-                        <span class="process-bar-badge process-${p.process_name}">${p.process_name.replace(/_/g, ' ')}</span>
+                        <span class="process-bar-badge process-${escapeHtml(p.process_name)}">${escapeHtml(p.process_name.replace(/_/g, ' '))}</span>
                     </div>
                     <div class="process-bar-track">
-                        <div class="process-bar-fill process-${p.process_name}" style="width:${width}%">
+                        <div class="process-bar-fill process-${escapeHtml(p.process_name)}" style="width:${width}%">
                             <span class="process-bar-pct">${pct}%</span>
                         </div>
                     </div>
@@ -514,7 +514,7 @@ async function loadDashboard() {
                             <div class="deadline-dot"></div>
                             <span class="deadline-days">${labelText}</span>
                         </div>
-                        <div class="deadline-pr">${d.pr_number}</div>
+                        <div class="deadline-pr">${escapeHtml(d.pr_number)}</div>
                         <div class="deadline-meta">${escHtml(d.step_name)} · ${escHtml(d.officer_name)}</div>
                     </div>
                     <div class="deadline-right">
@@ -534,14 +534,14 @@ async function loadDashboard() {
             recent.innerHTML = files.slice(0, 5).map(f => `
                 <div class="recent-file-item" style="cursor:pointer" onclick="viewFileDetail(${f.id})">
                     <div class="recent-file-left">
-                        <div class="recent-file-avatar">${initials(f.officer_name)}</div>
+                        <div class="recent-file-avatar">${escapeHtml(initials(f.officer_name))}</div>
                         <div class="recent-file-info">
-                            <div class="recent-file-pr">${f.pr_number}</div>
+                            <div class="recent-file-pr">${escapeHtml(f.pr_number)}</div>
                             <div class="recent-file-title">${escHtml(f.title)}</div>
                         </div>
                     </div>
                     <div class="recent-file-right">
-                        <span class="process-tag process-${f.process_name}">${f.process_name.replace(/_/g, ' ')}</span>
+                        <span class="process-tag process-${escapeHtml(f.process_name)}">${escapeHtml(f.process_name.replace(/_/g, ' '))}</span>
                         ${statusChip(f.status, f.is_overdue)}
                     </div>
                 </div>
@@ -568,14 +568,14 @@ async function loadFiles() {
             const sel = $('#filterOfficer');
             sel.innerHTML = '<option value="team_me">My Team</option>' +
                 '<option value="">All Officers</option>' +
-                allOfficers.map(o => `<option value="${o.id}">${o.name}${o.team_name ? ' (' + o.team_name + ')' : ''}</option>`).join('');
+                allOfficers.map(o => `<option value="${o.id}">${escapeHtml(o.name)}${escapeHtml(o.team_name ? ' (' + o.team_name + ')' : '')}</option>`).join('');
         }
 
         // Load process filter
         allProcesses = await api('/api/processes') || [];
         const pSel = $('#filterProcess');
         pSel.innerHTML = '<option value="">All Processes</option>' +
-            allProcesses.map(p => `<option value="${p.name}">${p.name.replace(/_/g, ' ')}</option>`).join('');
+            allProcesses.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name.replace(/_/g, ' '))}</option>`).join('');
 
         await refreshFilesTable();
     } catch (err) {
@@ -644,12 +644,12 @@ async function refreshFilesTable() {
         }
 
         return `<tr class="${rowCls}">
-            <td><span class="pr-number">${f.pr_number}</span></td>
+            <td><span class="pr-number">${escapeHtml(f.pr_number)}</span></td>
             <td><div class="file-title-cell">${escHtml(f.title)}</div></td>
-            <td><span class="process-tag process-${f.process_name}">${f.process_name.replace(/_/g, ' ')}</span></td>
+            <td><span class="process-tag process-${escapeHtml(f.process_name)}">${escapeHtml(f.process_name.replace(/_/g, ' '))}</span></td>
             <td>
                 <div class="officer-identity">
-                    <div class="officer-avatar-sm">${initials(f.officer_name)}</div>
+                    <div class="officer-avatar-sm">${escapeHtml(initials(f.officer_name))}</div>
                     <span>${escHtml(f.officer_name)}</span>
                 </div>
             </td>
@@ -1008,12 +1008,12 @@ function setupGanttTooltips() {
             tooltip = document.createElement('div');
             tooltip.className = 'gantt-tooltip';
             tooltip.innerHTML = `
-                <div class="gantt-tooltip-title">${bar.dataset.step}</div>
-                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">SLA</span><span class="gantt-tooltip-value">${bar.dataset.sla} days</span></div>
-                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Started</span><span class="gantt-tooltip-value">${bar.dataset.start}</span></div>
-                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Ended</span><span class="gantt-tooltip-value">${bar.dataset.end}</span></div>
-                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Actual</span><span class="gantt-tooltip-value">${bar.dataset.actual} days</span></div>
-                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Status</span><span class="gantt-tooltip-value">${bar.dataset.status}</span></div>
+                <div class="gantt-tooltip-title">${escapeHtml(bar.dataset.step)}</div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">SLA</span><span class="gantt-tooltip-value">${escapeHtml(bar.dataset.sla)} days</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Started</span><span class="gantt-tooltip-value">${escapeHtml(bar.dataset.start)}</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Ended</span><span class="gantt-tooltip-value">${escapeHtml(bar.dataset.end)}</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Actual</span><span class="gantt-tooltip-value">${escapeHtml(bar.dataset.actual)} days</span></div>
+                <div class="gantt-tooltip-row"><span class="gantt-tooltip-label">Status</span><span class="gantt-tooltip-value">${escapeHtml(bar.dataset.status)}</span></div>
             `;
             document.body.appendChild(tooltip);
             const rect = bar.getBoundingClientRect();
@@ -1074,7 +1074,7 @@ async function viewFileDetail(id) {
         if (!f) return;
         const contracts = f.status === 'Completed' ? await api(`/api/files/${id}/contracts`) : [];
 
-        $('#detailTitle').innerHTML = `<span class="pr-accent">${f.pr_number}</span> &mdash; ${escHtml(f.title)}`;
+        $('#detailTitle').innerHTML = `<span class="pr-accent">${escapeHtml(f.pr_number)}</span> &mdash; ${escHtml(f.title)}`;
 
         const statusDotCls = f.status === 'Completed' ? 'status-dot-completed' : f.status === 'Cancelled' ? 'status-dot-cancelled' : f.is_overdue ? 'status-dot-overdue' : 'status-dot-active';
         const statusLbl = f.status === 'Completed' ? 'Completed' : f.status === 'Cancelled' ? 'Cancelled' : f.is_overdue ? 'Overdue' : 'Active';
@@ -1084,11 +1084,11 @@ async function viewFileDetail(id) {
         <div class="modal-meta-grid">
             <div class="meta-box">
                 <span class="meta-label">PR NUMBER</span>
-                <span class="meta-value">${f.pr_number}</span>
+                <span class="meta-value">${escapeHtml(f.pr_number)}</span>
             </div>
             <div class="meta-box">
                 <span class="meta-label">PROCESS</span>
-                <span class="meta-value">${f.process_name.replace(/_/g, ' ')}</span>
+                <span class="meta-value">${escapeHtml(f.process_name.replace(/_/g, ' '))}</span>
             </div>
             <div class="meta-box">
                 <span class="meta-label">OFFICER</span>
@@ -1150,7 +1150,7 @@ async function viewFileDetail(id) {
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
                             Bids & Evaluation
                         </h3>
-                        ${f.basis_of_selection ? `<div style="font-size:0.85rem; color:var(--text-muted); margin-top:6px;">Selection Method: <strong style="color:var(--text-primary); text-transform:capitalize;">${f.basis_of_selection.replace(/_/g, ' ')}</strong></div>` : ''}
+                        ${f.basis_of_selection ? `<div style="font-size:0.85rem; color:var(--text-muted); margin-top:6px;">Selection Method: <strong style="color:var(--text-primary); text-transform:capitalize;">${escapeHtml(f.basis_of_selection.replace(/_/g, ' '))}</strong></div>` : ''}
                     </div>
                     ${bidActionsHtml}
                 </div>
@@ -1232,7 +1232,7 @@ async function viewFileDetail(id) {
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg> 
                         COMMENT
                     </div>
-                    <textarea class="comment-input" placeholder="${isTeamLeader ? 'Add a comment about SLA status...' : 'No comment provided.'}" id="stepComment_${log.id}" ${!isTeamLeader ? 'readonly' : ''}>${log.comment || ''}</textarea>
+                    <textarea class="comment-input" placeholder="${isTeamLeader ? 'Add a comment about SLA status...' : 'No comment provided.'}" id="stepComment_${log.id}" ${!isTeamLeader ? 'readonly' : ''}>${escapeHtml(log.comment || '')}</textarea>
                     ${isTeamLeader ? `<button class="btn-save-comment" onclick="saveStepComment(${f.id}, ${log.id})">Save Comment</button>` : ''}
                 </div>`;
             }
@@ -1388,12 +1388,12 @@ $('#btnNewFile').addEventListener('click', async () => {
     // Populate process select
     const procs = await api('/api/processes');
     const pSel = $('#inputProcess');
-    pSel.innerHTML = procs.map(p => `<option value="${p.name}">${p.name.replace(/_/g, ' ')}</option>`).join('');
+    pSel.innerHTML = procs.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name.replace(/_/g, ' '))}</option>`).join('');
 
     // Populate officer select
     const officers = await api('/api/officers');
     const oSel = $('#inputOfficer');
-    oSel.innerHTML = officers.map(o => `<option value="${o.id}">${o.name}${o.team_name ? ' (' + o.team_name + ')' : ''}</option>`).join('');
+    oSel.innerHTML = officers.map(o => `<option value="${o.id}">${escapeHtml(o.name)}${escapeHtml(o.team_name ? ' (' + o.team_name + ')' : '')}</option>`).join('');
 
     // Populate step select based on process
     async function updateSteps() {
@@ -1404,7 +1404,7 @@ $('#btnNewFile').addEventListener('click', async () => {
             const sSel = $('#inputCurrentStep');
             sSel.innerHTML = '<option value="">Step 1 (start from beginning)</option>' +
                 stepsData.filter(s => s.step_name !== 'Completed').map(s =>
-                    `<option value="${s.step_order}">Step ${s.step_order}: ${s.step_name}</option>`
+                    `<option value="${s.step_order}">Step ${s.step_order}: ${escapeHtml(s.step_name)}</option>`
                 ).join('');
         }
     }
@@ -1490,7 +1490,7 @@ function renderContractFilesList(filesToRender) {
     
     list.innerHTML = filesToRender.map(f => `
         <div class="list-item ${currentContractFile && currentContractFile.id === f.id ? 'active' : ''}" onclick="selectContractFile(${f.id})">
-            <div class="list-item-title">${f.pr_number} — ${escHtml(f.title)}</div>
+            <div class="list-item-title">${escapeHtml(f.pr_number)} — ${escHtml(f.title)}</div>
             <div class="list-item-sub">
                 Officer: ${escHtml(f.officer_name)} &bull; ${new Date(f.created_at).toLocaleDateString()}
             </div>
@@ -1533,9 +1533,9 @@ function renderContractDetail(file, contracts, winningBid) {
             <div class="card-header" style="flex-direction: column; align-items: flex-start; gap: 6px; border-bottom: none; padding-bottom: 8px;">
                 <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
                     <h2 style="font-size: 1.35rem; font-weight: 700; color: var(--text-primary); margin: 0; letter-spacing: -0.01em;">
-                        <span style="color: var(--accent-light); font-family: 'SF Mono', 'Fira Code', monospace; margin-right: 4px;">${file.pr_number}</span> &mdash; ${escHtml(file.title)}
+                        <span style="color: var(--accent-light); font-family: 'SF Mono', 'Fira Code', monospace; margin-right: 4px;">${escapeHtml(file.pr_number)}</span> &mdash; ${escHtml(file.title)}
                     </h2>
-                    <span class="process-tag process-${file.process_name || 'sole_source'}">${(file.process_name || 'Standard').replace(/_/g, ' ').toUpperCase()}</span>
+                    <span class="process-tag process-${escapeHtml(file.process_name || 'sole_source')}">${escapeHtml((file.process_name || 'Standard').replace(/_/g, ' ').toUpperCase())}</span>
                 </div>
                 <div style="font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 12px; margin-top: 4px;">
                     <div style="display: flex; align-items: center; gap: 6px;">
@@ -1836,11 +1836,11 @@ async function loadOfficers() {
             const initials = o.name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
             return `<div class="officer-card">
                 <div class="officer-card-header">
-                    <div class="officer-avatar">${initials}</div>
+                    <div class="officer-avatar">${escapeHtml(initials)}</div>
                     <div class="officer-info">
-                        <h3>${o.name}</h3>
-                        <span class="officer-email">${o.email}</span>
-                        ${o.team_name ? `<span class="officer-team">${o.team_name}</span>` : ''}
+                        <h3>${escapeHtml(o.name)}</h3>
+                        <span class="officer-email">${escapeHtml(o.email)}</span>
+                        ${o.team_name ? `<span class="officer-team">${escapeHtml(o.team_name)}</span>` : ''}
                     </div>
                 </div>
                 <div class="officer-stats">
@@ -1858,7 +1858,7 @@ async function loadOfficers() {
                     </div>
                 </div>
                 <div class="officer-card-actions">
-                    <button class="btn btn-sm btn-secondary" onclick="openTransfer(${o.id}, '${o.name}')">Transfer</button>
+                    <button class="btn btn-sm btn-secondary" onclick="openTransfer(${o.id}, ${escapeHtml(JSON.stringify(o.name))})">Transfer</button>
                     ${parseInt(o.file_count) === 0 && currentUser.role === 'team_leader' ? `<button class="btn btn-sm btn-danger" onclick="deleteOfficer(${o.id})">Remove</button>` : ''}
                 </div>
             </div>`;
@@ -1933,7 +1933,7 @@ async function openTransfer(officerId, officerName) {
                     <input type="checkbox" class="transfer-file-chk" checked>
                     <div class="transfer-file-info">
                         <strong>${escHtml(f.pr_number)}</strong> — ${escHtml(f.title)}
-                        <span class="transfer-process-tag">${f.process_name.replace(/_/g, ' ')}</span>
+                        <span class="transfer-process-tag">${escapeHtml(f.process_name.replace(/_/g, ' '))}</span>
                     </div>
                 </label>
                 <select class="select-input transfer-target">
@@ -2086,7 +2086,7 @@ async function loadAdmin() {
     // Populate team filter
     const sel = $('#adminFilterTeam');
     sel.innerHTML = '<option value="">All Teams</option>' +
-        adminTeams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+        adminTeams.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
 }
 
 async function loadAdminUsers() {
@@ -2109,15 +2109,15 @@ function renderAdminUsers() {
         const statusCls = u.is_active ? 'badge-active' : 'badge-inactive';
         const statusLbl = u.is_active ? 'Active' : 'Inactive';
         return `<tr>
-            <td><strong>${u.display_name}</strong></td>
-            <td>${u.email}</td>
-            <td><span class="badge badge-role-${u.role}">${roleLbl}</span></td>
-            <td>${u.team_name || '—'}</td>
+            <td><strong>${escapeHtml(u.display_name)}</strong></td>
+            <td>${escapeHtml(u.email)}</td>
+            <td><span class="badge badge-role-${escapeHtml(u.role)}">${escapeHtml(roleLbl)}</span></td>
+            <td>${escapeHtml(u.team_name || '—')}</td>
             <td>${u.file_count || 0} (${u.active_count || 0} active)</td>
             <td><span class="badge ${statusCls}">${statusLbl}</span></td>
             <td>
                 ${u.role !== 'admin' ? `<button class="btn-icon" title="Edit" onclick="editUser(${u.id})">✏️</button>` : ''}
-                ${u.role !== 'admin' ? `<button class="btn-icon" title="Reset password" onclick="resetUserPassword(${u.id}, '${u.display_name.replace(/'/g, "\\'")}')">🔑</button>` : ''}
+                ${u.role !== 'admin' ? `<button class="btn-icon" title="Reset password" onclick="resetUserPassword(${u.id})">🔑</button>` : ''}
                 ${u.role !== 'admin' && u.is_active ? `<button class="btn-icon" title="Deactivate" onclick="deactivateUser(${u.id})">🚫</button>` : ''}
                 ${u.role !== 'admin' && !u.is_active ? `<button class="btn-icon" title="Activate" onclick="activateUser(${u.id})">✅</button>` : ''}
             </td>
@@ -2169,7 +2169,7 @@ async function loadAuditLogs(page = 1) {
                 
                 let detailsHtml = '';
                 if (log.old_value || log.new_value) {
-                    const params = `${JSON.stringify(log.old_value || null).replace(/'/g, "&#39;")}, ${JSON.stringify(log.new_value || null).replace(/'/g, "&#39;")}`;
+                    const params = `${escapeHtml(JSON.stringify(log.old_value || null))}, ${escapeHtml(JSON.stringify(log.new_value || null))}`;
                     detailsHtml = `<button class="btn btn-sm" onclick='viewAuditDetails(${params})'>View Details</button>`;
                 }
 
@@ -2288,7 +2288,7 @@ $('#btnNewUser').addEventListener('click', async () => {
     // Populate teams
     const teams = await api('/api/admin/teams') || [];
     $('#inputUserTeam').innerHTML = '<option value="">No team</option>' +
-        teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+        teams.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
 
     openModal('modalUser');
 });
@@ -2307,7 +2307,7 @@ async function editUser(id) {
 
     const teams = await api('/api/admin/teams') || [];
     $('#inputUserTeam').innerHTML = '<option value="">No team</option>' +
-        teams.map(t => `<option value="${t.id}" ${t.id === user.team_id ? 'selected' : ''}>${t.name}</option>`).join('');
+        teams.map(t => `<option value="${t.id}" ${t.id === user.team_id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
 
     openModal('modalUser');
 }
@@ -2340,6 +2340,7 @@ $('#formUser').addEventListener('submit', async (e) => {
 });
 
 function resetUserPassword(id, name) {
+    if (name === undefined) name = adminUsers.find(user => user.id === id)?.display_name || '';
     $('#resetUserId').value = id;
     $('#resetUserName').textContent = name;
     $('#formResetPassword').reset();
@@ -2395,7 +2396,7 @@ async function loadAdminTeams() {
                 <div class="officer-card-header">
                     <div class="officer-avatar team-avatar">🏢</div>
                     <div class="officer-info">
-                        <h3>${t.name}</h3>
+                        <h3>${escapeHtml(t.name)}</h3>
                         <span class="officer-email">Created ${new Date(t.created_at).toLocaleDateString()}</span>
                     </div>
                 </div>
@@ -2414,7 +2415,7 @@ async function loadAdminTeams() {
                     </div>
                 </div>
                 <div class="officer-card-actions">
-                    <button class="btn btn-sm btn-secondary" onclick="editTeam(${t.id}, '${t.name.replace(/'/g, "\\'")}')">Edit</button>
+                    <button class="btn btn-sm btn-secondary" onclick="editTeam(${t.id}, ${escapeHtml(JSON.stringify(t.name))})">Edit</button>
                     ${parseInt(t.member_count) === 0 ? `<button class="btn btn-sm btn-danger" onclick="deleteTeam(${t.id})">Delete</button>` : ''}
                 </div>
             </div>
@@ -2474,12 +2475,12 @@ async function loadAdminProcesses() {
         const tbody = $('#processesBody');
         tbody.innerHTML = adminProcesses.map(p => `
             <tr>
-                <td><strong>${p.name}</strong></td>
+                <td><strong>${escapeHtml(p.name)}</strong></td>
                 <td>${p.step_count}</td>
                 <td>${p.total_sla_days} days</td>
                 <td>
-                    <button class="btn btn-sm btn-secondary" onclick="openProcessStepsModal('${p.name.replace(/'/g, "\\'")}')">Edit Steps</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteProcess('${p.name.replace(/'/g, "\\'")}')">Delete</button>
+                    <button class="btn btn-sm btn-secondary" onclick="openProcessStepsModal(${escapeHtml(JSON.stringify(p.name))})">Edit Steps</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteProcess(${escapeHtml(JSON.stringify(p.name))})">Delete</button>
                 </td>
             </tr>
         `).join('') || `<tr><td colspan="4" class="text-center text-muted" style="padding: 1rem;">No processes found.</td></tr>`;
@@ -3126,13 +3127,13 @@ async function openAssignTriage(triageId) {
         // Populate process select
         const procs = await api('/api/processes');
         $('#assignTriageProcess').innerHTML = procs.map(p =>
-            `<option value="${p.name}">${p.name.replace(/_/g, ' ')}</option>`
+            `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name.replace(/_/g, ' '))}</option>`
         ).join('');
 
         // Populate officer select
         const officers = await api('/api/officers');
         $('#assignTriageOfficer').innerHTML = officers.map(o =>
-            `<option value="${o.id}">${o.name}${o.team_name ? ' (' + o.team_name + ')' : ''}</option>`
+            `<option value="${o.id}">${escapeHtml(o.name)}${escapeHtml(o.team_name ? ' (' + o.team_name + ')' : '')}</option>`
         ).join('');
 
         openModal('modalAssignTriage');
@@ -3856,11 +3857,11 @@ function renderVendorsList() {
                         background: ${v.status === 'Active' ? 'rgba(16,185,129,0.1)' : v.status === 'Inactive' ? 'rgba(156,163,175,0.1)' : 'rgba(239,68,68,0.1)'};
                         color: ${v.status === 'Active' ? '#10b981' : v.status === 'Inactive' ? '#9ca3af' : '#ef4444'};
                         border: 1px solid ${v.status === 'Active' ? 'rgba(16,185,129,0.2)' : v.status === 'Inactive' ? 'rgba(156,163,175,0.2)' : 'rgba(239,68,68,0.2)'};
-                    ">${v.status}</span>
+                    ">${escapeHtml(v.status)}</span>
                 </td>
                 <td>
                     ${isLeader ? `
-                        <button class="btn-action btn-view" onclick='editVendor(${JSON.stringify(v).replace(/'/g, "&#39;")})' title="Edit">
+                        <button class="btn-action btn-view" onclick='editVendor(${escapeHtml(JSON.stringify(v))})' title="Edit">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                         </button>
                     ` : ''}
@@ -3968,7 +3969,7 @@ async function renderBidsForFile(fileId, canManage) {
                     ${canManage ? `
                         <div style="display:flex; gap:6px;">
                             ${isLeader && !b.is_winner && !b.disqualified ? `<button class="btn btn-sm" style="border:1px solid #10b981; color:#10b981; background:transparent;" onclick="markBidWinner(${b.id}, ${fileId})">Mark Winner</button>` : ''}
-                            <button class="btn-action" onclick='editBid(${JSON.stringify(b).replace(/'/g, "&#39;")})' title="Edit Bid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
+                            <button class="btn-action" onclick='editBid(${escapeHtml(JSON.stringify(b))})' title="Edit Bid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
                             ${isLeader ? `<button class="btn-action" style="color:var(--danger)" onclick="deleteBid(${b.id}, ${fileId})" title="Delete Bid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>` : ''}
                         </div>
                     ` : ''}
@@ -4298,7 +4299,7 @@ window.evaluateBids = async function(fileId) {
             <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                 <div>
                     <strong style="color:var(--text-primary); font-size:1.1rem;">Recommended Winner: <span style="color:var(--accent);">${vendorDisp}</span></strong>
-                    <div style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">Based on <span style="text-transform:capitalize;">${(res.method || '').replace(/_/g, ' ')}</span></div>
+                    <div style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">Based on <span style="text-transform:capitalize;">${escapeHtml((res.method || '').replace(/_/g, ' '))}</span></div>
                     ${autoWinHtml}
                 </div>
                 ${!win.is_winner && currentUser.role === 'team_leader' ? `<button class="btn btn-sm btn-primary" onclick="markBidWinner(${win.id}, ${fileId})">Set as Winner</button>` : ''}
@@ -4347,7 +4348,7 @@ async function renderPOsForContract(contractId) {
                     <div>
                         <div style="font-weight:600; font-size:1.05rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
                             ${escapeHtml(po.po_number)}
-                            <span class="badge" style="background:transparent; border:1px solid ${poStatusClr}; color:${poStatusClr}; font-weight:600;">${po.status}</span>
+                            <span class="badge" style="background:transparent; border:1px solid ${poStatusClr}; color:${poStatusClr}; font-weight:600;">${escapeHtml(po.status)}</span>
                         </div>
                         <div style="font-size:0.85rem; color:var(--text-secondary); margin-top:4px;">
                             Date: ${po.po_date.split('T')[0]} &nbsp;|&nbsp; Amount: $${parseFloat(po.amount).toLocaleString()} &nbsp;|&nbsp; By: ${escapeHtml(po.created_by_name)}
@@ -4355,7 +4356,7 @@ async function renderPOsForContract(contractId) {
                         ${po.description ? `<div style="font-size:0.85rem; color:var(--text-muted); margin-top:6px;">${escapeHtml(po.description)}</div>` : ''}
                     </div>
                     <div style="display:flex; gap:6px;">
-                        <button class="btn btn-sm" style="background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color);" onclick='editPO(${JSON.stringify(po).replace(/'/g, "&#39;")})'>Edit PO</button>
+                        <button class="btn btn-sm" style="background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color);" onclick='editPO(${escapeHtml(JSON.stringify(po))})'>Edit PO</button>
                     </div>
                 </div>
                 
@@ -4539,7 +4540,7 @@ window.loadInvoices = async function(poId, contractId, isLeader) {
                     <option value="Paid" ${i.status === 'Paid' ? 'selected' : ''}>Paid</option>
                     <option value="Rejected" ${i.status === 'Rejected' ? 'selected' : ''}>Rejected</option>
                 </select>
-            ` : `<span style="margin-left:auto; font-size:0.75rem; font-weight:bold; color:${clr};">${i.status}</span>`;
+            ` : `<span style="margin-left:auto; font-size:0.75rem; font-weight:bold; color:${clr};">${escapeHtml(i.status)}</span>`;
 
             return `
             <div style="background:rgba(255,255,255,0.03); border-radius:4px; padding:6px; margin-bottom:4px; border:1px solid var(--border-color); display:flex; flex-direction:column; gap:4px;">

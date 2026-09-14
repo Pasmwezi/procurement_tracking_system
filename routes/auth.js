@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
 const rateLimit = require('express-rate-limit');
 const JWT_SECRET = require('../config/jwtSecret');
+const { requireAuth } = require('../middleware/auth');
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -19,7 +20,7 @@ router.post('/login', authLimiter, async (req, res) => {
 
     try {
         const result = await pool.query(
-            'SELECT id, email, password_hash, display_name, role, team_id, password_changed, is_active FROM users WHERE email = $1',
+            'SELECT id, email, password_hash, display_name, role, team_id, password_changed, is_active, token_version FROM users WHERE email = $1',
             [email.toLowerCase().trim()]
         );
         if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid email or password' });
@@ -33,13 +34,13 @@ router.post('/login', authLimiter, async (req, res) => {
         if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
         const token = jwt.sign(
-            { id: user.id, role: user.role, teamId: user.team_id },
+            { id: user.id, role: user.role, teamId: user.team_id, purpose: 'access', tokenVersion: user.token_version },
             JWT_SECRET,
             { expiresIn: '8h' }
         );
 
         const refreshToken = jwt.sign(
-            { id: user.id, isRefresh: true },
+            { id: user.id, purpose: 'refresh', tokenVersion: user.token_version },
             JWT_SECRET,
             { expiresIn: '7d' }
         );
@@ -78,12 +79,12 @@ router.post('/refresh', async (req, res) => {
     try {
         const decoded = jwt.verify(refreshToken, JWT_SECRET);
         
-        if (!decoded.isRefresh) {
+        if (decoded.purpose !== 'refresh') {
             return res.status(401).json({ error: 'Invalid token type' });
         }
 
         const result = await pool.query(
-            'SELECT id, email, display_name, role, team_id, password_changed, is_active FROM users WHERE id = $1',
+            'SELECT id, email, display_name, role, team_id, password_changed, is_active, token_version FROM users WHERE id = $1',
             [decoded.id]
         );
 
@@ -92,16 +93,19 @@ router.post('/refresh', async (req, res) => {
         }
 
         const user = result.rows[0];
+        if (!Number.isInteger(decoded.tokenVersion) || decoded.tokenVersion !== user.token_version) {
+            return res.status(401).json({ error: 'Session revoked' });
+        }
 
         const token = jwt.sign(
-            { id: user.id, role: user.role, teamId: user.team_id },
+            { id: user.id, role: user.role, teamId: user.team_id, purpose: 'access', tokenVersion: user.token_version },
             JWT_SECRET,
             { expiresIn: '8h' }
         );
 
         // Optionally, rotate refresh token here as well
         const newRefreshToken = jwt.sign(
-            { id: user.id, isRefresh: true },
+            { id: user.id, purpose: 'refresh', tokenVersion: user.token_version },
             JWT_SECRET,
             { expiresIn: '7d' }
         );
@@ -140,13 +144,12 @@ router.post('/logout', (req, res) => {
 });
 
 // PUT /api/auth/password — change own password (any authenticated user)
-router.put('/password', async (req, res) => {
+router.put('/password', requireAuth, async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: 'Authentication required' });
 
     try {
-        const token = authHeader.split(' ')[1];
-        const decoded = jwt.verify(token, JWT_SECRET);
+        const decoded = req.user;
 
         const { currentPassword, newPassword } = req.body;
         if (!currentPassword || !newPassword) {
@@ -176,13 +179,12 @@ router.put('/password', async (req, res) => {
 });
 
 // GET /api/auth/me — get current user info
-router.get('/me', async (req, res) => {
+router.get('/me', requireAuth, async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: 'Authentication required' });
 
     try {
-        const token = authHeader.split(' ')[1];
-        const decoded = jwt.verify(token, JWT_SECRET);
+        const decoded = req.user;
 
         const userRes = await pool.query(
             `SELECT u.id, u.email, u.display_name, u.role, u.team_id, u.password_changed,
