@@ -28,8 +28,15 @@ COPY package*.json ./
 # Only install production dependencies
 RUN npm ci --only=production
 
-# Copy source code from builder
-COPY --from=builder /app ./
+# Copy application source without replacing production-only node_modules
+COPY --from=builder /app/server.js ./server.js
+COPY --from=builder /app/config ./config
+COPY --from=builder /app/db ./db
+COPY --from=builder /app/middleware ./middleware
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/routes ./routes
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/services ./services
 
 # Change ownership to the non-root node user
 RUN chown -R node:node /app

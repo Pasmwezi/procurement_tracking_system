@@ -1,7 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
+const { param } = require('express-validator');
+const { validateRequest } = require('../middleware/validate');
 const { executeFileTransfers } = require('../services/fileTransfers');
+const { setUserActive } = require('../services/userLifecycle');
 
 // GET /api/officers — list officers (users with role='officer')
 // Team Leaders see all officers (can assign cross-team)
@@ -88,35 +91,26 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE /api/officers/:id — only team leaders
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', [
+    param('id').isInt({ min: 1 }).withMessage('Officer ID must be a positive integer'),
+    validateRequest
+], async (req, res) => {
     if (req.user.role !== 'team_leader') {
         return res.status(403).json({ error: 'Only team leaders can remove officers' });
     }
 
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-        const officer = await client.query(
-            "SELECT id FROM users WHERE id = $1 AND role = 'officer' AND team_id = $2 FOR UPDATE",
-            [req.params.id, req.user.teamId]
-        );
-        if (!officer.rowCount) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Officer not found in your team' });
-        }
-        const files = await client.query('SELECT 1 FROM files WHERE officer_id = $1 LIMIT 1', [req.params.id]);
-        if (files.rowCount) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Officer still has assigned files' });
-        }
-        await client.query('UPDATE users SET is_active = FALSE WHERE id = $1', [req.params.id]);
-        await client.query('COMMIT');
+        await setUserActive(pool, {
+            userId: Number(req.params.id),
+            isActive: false,
+            teamId: req.user.teamId,
+            requiredRole: 'officer',
+            blockAnyAssigned: true
+        });
         res.json({ success: true });
     } catch (err) {
-        await client.query('ROLLBACK');
-        res.status(500).json({ error: err.message });
-    } finally {
-        client.release();
+        const message = err.statusCode === 404 ? 'Officer not found in your team' : err.message;
+        res.status(err.statusCode || 500).json({ error: message });
     }
 });
 

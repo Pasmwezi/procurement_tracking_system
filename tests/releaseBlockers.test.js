@@ -56,7 +56,7 @@ test('remaining team-scoped mutations and transactional audits are enforced', ()
     const invoices = read('routes/purchaseOrders.js');
     const files = read('routes/files.js');
     const triage = read('routes/triage.js');
-    assert.match(officers, /team_id = \$2 FOR UPDATE/);
+    assert.match(officers, /setUserActive[\s\S]*teamId: req\.user\.teamId[\s\S]*requiredRole: 'officer'/);
     assert.match(transfers, /team_id = \$2 FOR SHARE/);
     assert.match(notifications, /u\.team_id/);
     assert.match(invoices, /canAccessPO\(req\.user, invoice\.rows\[0\]\.po_id, client\)/);
@@ -87,4 +87,26 @@ test('compose passes bootstrap values and migration failures terminate startup',
     assert.match(compose, /ADMIN_INITIAL_PASSWORD:/);
     assert.match(read('README.md'), /openssl rand -hex 32/);
     assert.match(server, /Migration failed:[\s\S]*process\.exit\(1\)/);
+});
+
+test('generic administrator profile edits cannot bypass lifecycle controls', () => {
+    const admin = read('routes/admin.js');
+    const lifecycle = read('services/userLifecycle.js');
+    const officers = read('routes/officers.js');
+    const app = read('public/js/app.js');
+    assert.match(admin, /is_active cannot be changed through the profile endpoint/);
+    assert.match(admin, /SELECT id, role, team_id FROM users WHERE id = \$1 FOR UPDATE/);
+    assert.match(admin, /SELECT 1 FROM files WHERE officer_id = \$1 LIMIT 1/);
+    assert.match(lifecycle, /SELECT id, role, team_id FROM users WHERE id = \$1.*FOR UPDATE/);
+    assert.match(lifecycle, /token_version = token_version \+ CASE/);
+    assert.match(admin, /\/users\/:id\/activate/);
+    assert.match(admin, /Officers and team leaders require a team assignment/);
+    assert.match(admin, /let client;[\s\S]*try \{[\s\S]*client = await pool\.connect\(\)/);
+    assert.match(officers, /param\('id'\)\.isInt\(\{ min: 1 \}\)/);
+    assert.match(app, /\/api\/admin\/users\/\$\{id\}\/activate/);
+});
+
+test('production image includes authentication configuration modules', () => {
+    const dockerfile = read('Dockerfile');
+    assert.match(dockerfile, /COPY --from=builder \/app\/config \.\/config/);
 });

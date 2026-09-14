@@ -5,6 +5,7 @@ const pool = require('../db/pool');
 const { body, param, query } = require('express-validator');
 const { validateRequest } = require('../middleware/validate');
 const { replaceProcessSteps } = require('../services/processSteps');
+const { setUserActive } = require('../services/userLifecycle');
 
 // GET /api/admin/users — list all users with team info
 router.get('/users', async (req, res) => {
@@ -36,6 +37,10 @@ router.post('/users', [
 ], async (req, res) => {
     const { email, display_name, role, team_id, password } = req.body;
 
+    if (role !== 'admin' && !team_id) {
+        return res.status(400).json({ error: 'Officers and team leaders require a team assignment' });
+    }
+
     try {
         let passwordHash = null;
         if (password) {
@@ -61,41 +66,88 @@ router.put('/users/:id', [
     body('display_name').optional().notEmpty().withMessage('Display name cannot be empty'),
     body('role').optional().isIn(['team_leader', 'officer', 'admin']).withMessage('Invalid role'),
     body('team_id').optional({ nullable: true }).isInt().withMessage('Team ID must be integer'),
-    body('is_active').optional().isBoolean().withMessage('is_active must be boolean'),
     validateRequest
 ], async (req, res) => {
     const { email, display_name, role, team_id, is_active } = req.body;
     const userId = parseInt(req.params.id);
 
-    // Prevent editing own admin account's role
+    if (is_active !== undefined) {
+        return res.status(400).json({ error: 'is_active cannot be changed through the profile endpoint' });
+    }
     if (userId === req.user.id && role && role !== 'admin') {
         return res.status(400).json({ error: 'Cannot change your own role' });
     }
 
+    let client;
     try {
+        client = await pool.connect();
+        await client.query('BEGIN');
+        const current = await client.query(
+            'SELECT id, role, team_id FROM users WHERE id = $1 FOR UPDATE',
+            [userId]
+        );
+        if (!current.rowCount) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const nextRole = role === undefined ? current.rows[0].role : role;
+        const nextTeamId = team_id === undefined ? current.rows[0].team_id : (team_id || null);
+        if (nextRole !== 'admin' && !nextTeamId) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Officers and team leaders require a team assignment' });
+        }
+        const roleOrTeamChanges = nextRole !== current.rows[0].role || nextTeamId !== current.rows[0].team_id;
+        if (roleOrTeamChanges) {
+            const assigned = await client.query(
+                'SELECT 1 FROM files WHERE officer_id = $1 LIMIT 1',
+                [userId]
+            );
+            if (assigned.rowCount) {
+                await client.query('ROLLBACK');
+                return res.status(409).json({ error: 'Cannot change role or team while files remain assigned. Transfer files first.' });
+            }
+        }
+
         const fields = [];
         const values = [];
         let idx = 1;
-
         if (email !== undefined) { fields.push(`email = $${idx++}`); values.push(email.toLowerCase().trim()); }
         if (display_name !== undefined) { fields.push(`display_name = $${idx++}`); values.push(display_name); }
         if (role !== undefined) { fields.push(`role = $${idx++}`); values.push(role); }
         if (team_id !== undefined) { fields.push(`team_id = $${idx++}`); values.push(team_id || null); }
-        if (is_active !== undefined) { fields.push(`is_active = $${idx++}`); values.push(is_active); }
         fields.push('updated_at = NOW()');
-
-        if (fields.length <= 1) return res.status(400).json({ error: 'No fields to update' });
+        if (fields.length <= 1) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'No fields to update' });
+        }
 
         values.push(userId);
-        const result = await pool.query(
+        const result = await client.query(
             `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, email, display_name, role, team_id, is_active`,
             values
         );
-        if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
         if (err.code === '23505') return res.status(409).json({ error: 'Email already exists' });
         res.status(500).json({ error: err.message });
+    } finally {
+        if (client) client.release();
+    }
+});
+
+// PUT /api/admin/users/:id/activate — activate a user
+router.put('/users/:id/activate', [
+    param('id').isInt().withMessage('User ID must be an integer'),
+    validateRequest
+], async (req, res) => {
+    try {
+        await setUserActive(pool, { userId: parseInt(req.params.id), isActive: true });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(err.statusCode || 500).json({ error: err.message });
     }
 });
 
@@ -130,34 +182,11 @@ router.delete('/users/:id', [
         return res.status(400).json({ error: 'Cannot deactivate your own account' });
     }
 
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-        const user = await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
-        if (!user.rowCount) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'User not found' });
-        }
-        const filesCheck = await client.query(
-            "SELECT COUNT(*) FROM files WHERE officer_id = $1 AND status = 'Active'",
-            [userId]
-        );
-        if (parseInt(filesCheck.rows[0].count) > 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'Cannot deactivate user with active files. Transfer files first.' });
-        }
-
-        await client.query(
-            'UPDATE users SET is_active = FALSE, updated_at = NOW() WHERE id = $1',
-            [userId]
-        );
-        await client.query('COMMIT');
+        await setUserActive(pool, { userId, isActive: false });
         res.json({ success: true });
     } catch (err) {
-        await client.query('ROLLBACK');
-        res.status(500).json({ error: err.message });
-    } finally {
-        client.release();
+        res.status(err.statusCode || 500).json({ error: err.message });
     }
 });
 

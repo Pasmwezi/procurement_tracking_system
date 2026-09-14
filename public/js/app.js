@@ -2371,7 +2371,7 @@ async function deactivateUser(id) {
 
 async function activateUser(id) {
     try {
-        await api(`/api/admin/users/${id}`, { method: 'PUT', body: JSON.stringify({ is_active: true }) });
+        await api(`/api/admin/users/${id}/activate`, { method: 'PUT', body: JSON.stringify({}) });
         showToast('User activated');
         loadAdminUsers();
     } catch (err) { showToast(err.message, 'error'); }
