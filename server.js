@@ -209,6 +209,12 @@ async function start() {
             ADD COLUMN IF NOT EXISTS number_of_options INTEGER,
             ADD COLUMN IF NOT EXISTS contractor_name VARCHAR(300);
         `);
+        await pool.query(`
+            ALTER TABLE notifications
+            ADD COLUMN IF NOT EXISTS contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_contract_expiry
+            ON notifications(contract_id) WHERE contract_id IS NOT NULL;
+        `);
         // Priority-1 schema additions
         await pool.query(`
             ALTER TABLE files

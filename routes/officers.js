@@ -7,7 +7,7 @@ const { executeFileTransfers } = require('../services/fileTransfers');
 const { setUserActive } = require('../services/userLifecycle');
 
 // GET /api/officers — list officers (users with role='officer')
-// Team Leaders see all officers (can assign cross-team)
+// Administrators see all officers; team leaders see only their own team.
 // Officers see nothing (403 handled by requireRole in server.js, but GET allowed for file forms)
 router.get('/', async (req, res) => {
     if (req.user.role === 'officer') return res.status(403).json({ error: 'Access denied' });
@@ -40,17 +40,19 @@ router.get('/', async (req, res) => {
 
 // GET /api/officers/:id/transfer-candidates — complete active-file list
 router.get('/:id/transfer-candidates', async (req, res) => {
-    if (req.user.role !== 'team_leader') {
-        return res.status(403).json({ error: 'Only team leaders can transfer files' });
+    if (!['admin', 'team_leader'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Only administrators and team leaders can transfer files' });
     }
     const officerId = Number(req.params.id);
     if (!Number.isInteger(officerId) || officerId <= 0) {
         return res.status(400).json({ error: 'Officer ID must be a positive integer' });
     }
     try {
+        const isAdmin = req.user.role === 'admin';
         const officer = await pool.query(
-            "SELECT id FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE AND team_id = $2",
-            [officerId, req.user.teamId]
+            `SELECT id FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE
+             ${isAdmin ? '' : 'AND team_id = $2'}`,
+            isAdmin ? [officerId] : [officerId, req.user.teamId]
         );
         if (officer.rowCount === 0) return res.status(404).json({ error: 'Active officer not found' });
         const files = await pool.query(
@@ -114,10 +116,10 @@ router.delete('/:id', [
     }
 });
 
-// PUT /api/officers/:id/transfer — transfer files (team leaders only)
+// PUT /api/officers/:id/transfer — administrators globally; team leaders within their team
 router.put('/:id/transfer', async (req, res) => {
-    if (req.user.role !== 'team_leader') {
-        return res.status(403).json({ error: 'Only team leaders can transfer files' });
+    if (!['admin', 'team_leader'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Only administrators and team leaders can transfer files' });
     }
 
     try {
@@ -126,6 +128,7 @@ router.put('/:id/transfer', async (req, res) => {
             transfers: req.body.transfers,
             userId: req.user.id,
             teamId: req.user.teamId,
+            allowCrossTeam: req.user.role === 'admin',
             ipAddress: req.ip
         });
         const grouped = {};

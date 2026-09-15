@@ -57,7 +57,8 @@ test('remaining team-scoped mutations and transactional audits are enforced', ()
     const files = read('routes/files.js');
     const triage = read('routes/triage.js');
     assert.match(officers, /setUserActive[\s\S]*teamId: req\.user\.teamId[\s\S]*requiredRole: 'officer'/);
-    assert.match(transfers, /team_id = \$2 FOR SHARE/);
+    assert.match(transfers, /allowCrossTeam \? '' : 'AND team_id = \$2'/);
+    assert.match(officers, /allowCrossTeam: req\.user\.role === 'admin'/);
     assert.match(notifications, /u\.team_id/);
     assert.match(invoices, /canAccessPO\(req\.user, invoice\.rows\[0\]\.po_id, client\)/);
     assert.match(invoices, /Paid: \['Paid'\]/);

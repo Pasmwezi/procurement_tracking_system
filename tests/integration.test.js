@@ -13,12 +13,13 @@ const {
     syncTriageCancellationStatus,
     reconcileAssignedTriageCancellations
 } = require('../services/triageProgress');
-
 const connectionString = process.env.TEST_DATABASE_URL;
 
 if (!connectionString) {
     test('database integration tests require TEST_DATABASE_URL', { skip: true }, () => {});
 } else {
+    process.env.DATABASE_URL ||= connectionString;
+    const { checkSLAs, createNotificationForCurrentOwner } = require('../services/slaChecker');
     const pool = new Pool({ connectionString });
 
     test.before(async () => {
@@ -53,12 +54,22 @@ if (!connectionString) {
                 step_started_at TIMESTAMP,
                 completed_at TIMESTAMP
             );
+            CREATE TABLE contracts (
+                id SERIAL PRIMARY KEY,
+                file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                contract_number TEXT,
+                contractor_name TEXT,
+                end_date DATE NOT NULL,
+                amended_end_date DATE
+            );
+            CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT);
             CREATE TABLE notifications (
                 id SERIAL PRIMARY KEY,
                 file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
                 officer_id INTEGER NOT NULL REFERENCES users(id),
                 step_id INTEGER REFERENCES process_steps(id),
                 message TEXT NOT NULL,
+                contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
                 is_read BOOLEAN DEFAULT FALSE
             );
             CREATE TABLE file_step_log (
@@ -154,6 +165,114 @@ if (!connectionString) {
             teamId: 1
         }), /active officer/i);
         assert.equal((await pool.query('SELECT officer_id FROM files WHERE id=$1', [file.rows[0].id])).rows[0].officer_id, file.rows[0].officer_id);
+    });
+
+    test('executeFileTransfers permits an explicitly global administrator transfer across teams', async () => {
+        const source = await pool.query("SELECT id FROM users WHERE email='source@example.test'");
+        const outsider = await pool.query("SELECT id FROM users WHERE email='outsider@example.test'");
+        const file = await pool.query("SELECT id FROM files WHERE pr_number='PR-1'");
+        await pool.query('UPDATE files SET officer_id=$1 WHERE id=$2', [source.rows[0].id, file.rows[0].id]);
+        await pool.query('UPDATE notifications SET officer_id=$1 WHERE file_id=$2', [source.rows[0].id, file.rows[0].id]);
+
+        const result = await executeFileTransfers(pool, {
+            fromOfficerId: source.rows[0].id,
+            transfers: [{ file_id: file.rows[0].id, to_officer_id: outsider.rows[0].id }],
+            userId: 99,
+            teamId: null,
+            allowCrossTeam: true,
+            ipAddress: '127.0.0.1'
+        });
+
+        assert.equal(result.transferredCount, 1);
+        assert.equal((await pool.query('SELECT officer_id FROM files WHERE id=$1', [file.rows[0].id])).rows[0].officer_id, outsider.rows[0].id);
+        assert.equal((await pool.query('SELECT officer_id FROM notifications WHERE file_id=$1 AND is_read=FALSE', [file.rows[0].id])).rows[0].officer_id, outsider.rows[0].id);
+        const audit = await pool.query("SELECT old_value, new_value FROM audit_log WHERE action='file.transfer' ORDER BY id DESC LIMIT 1");
+        assert.equal(audit.rows[0].old_value.officer_id, source.rows[0].id);
+        assert.equal(audit.rows[0].new_value.officer_id, outsider.rows[0].id);
+    });
+
+    test('SLA notification creation revalidates ownership after a concurrent assignment change', async () => {
+        const source = await pool.query("SELECT id FROM users WHERE email='source@example.test'");
+        const outsider = await pool.query("SELECT id FROM users WHERE email='outsider@example.test'");
+        const step = await pool.query("SELECT id FROM process_steps WHERE process_name='P' LIMIT 1");
+        const file = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-RACE-NOTIFY','Race notification','P',$1,$2,'Active') RETURNING id", [source.rows[0].id, step.rows[0].id]);
+        const assignment = await pool.connect();
+        let pending;
+        try {
+            await assignment.query('BEGIN');
+            await assignment.query('SELECT id FROM files WHERE id=$1 FOR UPDATE', [file.rows[0].id]);
+            pending = createNotificationForCurrentOwner(pool, {
+                fileId: file.rows[0].id,
+                expectedOfficerId: source.rows[0].id,
+                expectedStepId: step.rows[0].id,
+                message: 'Race-safe notification',
+                notificationKind: 'step',
+                requireActive: true
+            });
+            await assignment.query('UPDATE files SET officer_id=$1 WHERE id=$2', [outsider.rows[0].id, file.rows[0].id]);
+            await assignment.query('COMMIT');
+            assert.equal(await pending, null);
+            assert.equal((await pool.query('SELECT id FROM notifications WHERE file_id=$1', [file.rows[0].id])).rowCount, 0);
+        } finally {
+            await assignment.query('ROLLBACK');
+            assignment.release();
+            if (pending) await pending;
+        }
+    });
+
+    test('contract notification creation revalidates a concurrent amendment', async () => {
+        const officer = await pool.query("SELECT id FROM users WHERE email='source@example.test'");
+        const step = await pool.query("SELECT id FROM process_steps WHERE process_name='P' LIMIT 1");
+        const file = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-CONTRACT-RACE','Contract race','P',$1,$2,'Completed') RETURNING id", [officer.rows[0].id, step.rows[0].id]);
+        const contract = await pool.query("INSERT INTO contracts(file_id,contract_number,end_date) VALUES($1,'C-RACE',CURRENT_DATE + 10) RETURNING id", [file.rows[0].id]);
+        const amendment = await pool.connect();
+        let pending;
+        try {
+            await amendment.query('BEGIN');
+            await amendment.query('SELECT id FROM contracts WHERE id=$1 FOR UPDATE', [contract.rows[0].id]);
+            pending = createNotificationForCurrentOwner(pool, {
+                fileId: file.rows[0].id,
+                expectedOfficerId: officer.rows[0].id,
+                expectedStepId: step.rows[0].id,
+                contractId: contract.rows[0].id,
+                message: 'Expiring contract',
+                notificationKind: 'contract'
+            });
+            await amendment.query('UPDATE contracts SET amended_end_date=CURRENT_DATE + 60 WHERE id=$1', [contract.rows[0].id]);
+            await amendment.query('COMMIT');
+            assert.equal(await pending, null);
+            assert.equal((await pool.query('SELECT id FROM notifications WHERE contract_id=$1', [contract.rows[0].id])).rowCount, 0);
+        } finally {
+            await amendment.query('ROLLBACK');
+            amendment.release();
+            if (pending) await pending;
+        }
+    });
+
+    test('each expiring contract on one file has an independent notification key', async () => {
+        const officer = await pool.query("SELECT id FROM users WHERE email='source@example.test'");
+        const step = await pool.query("SELECT id FROM process_steps WHERE process_name='P' LIMIT 1");
+        const file = await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status) VALUES ('PR-MULTI-CONTRACT','Multiple contracts','P',$1,$2,'Completed') RETURNING id", [officer.rows[0].id, step.rows[0].id]);
+        const contracts = await pool.query("INSERT INTO contracts(file_id,contract_number,end_date) VALUES($1,'C-ONE',CURRENT_DATE + 10),($1,'C-TWO',CURRENT_DATE + 20) RETURNING id", [file.rows[0].id]);
+        for (const contract of contracts.rows) {
+            const created = await createNotificationForCurrentOwner(pool, {
+                fileId: file.rows[0].id,
+                expectedOfficerId: officer.rows[0].id,
+                expectedStepId: step.rows[0].id,
+                contractId: contract.id,
+                message: `Expiring contract ${contract.id}`,
+                notificationKind: 'contract'
+            });
+            assert.ok(created);
+        }
+        assert.equal((await pool.query('SELECT DISTINCT contract_id FROM notifications WHERE file_id=$1', [file.rows[0].id])).rowCount, 2);
+    });
+
+    test('concurrent SLA checks share one in-flight execution', async () => {
+        const first = checkSLAs(pool);
+        const second = checkSLAs(pool);
+        assert.equal(first, second);
+        await first;
     });
 
     test('assignment row lock prevents concurrent officer deactivation', async () => {

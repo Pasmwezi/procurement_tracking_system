@@ -16,9 +16,9 @@ const SMTP_KEYS = [
  * Load SMTP settings from the database.
  * Returns an object with all smtp_* keys, or null if not configured.
  */
-async function getSmtpSettings() {
+async function getSmtpSettings(db = pool) {
     try {
-        const result = await pool.query(
+        const result = await db.query(
             'SELECT key, value FROM app_settings WHERE key = ANY($1)',
             [SMTP_KEYS]
         );
@@ -69,8 +69,7 @@ async function saveSmtpSettings(settings) {
  * Create a nodemailer transporter from current DB settings.
  * Returns null if SMTP is not configured.
  */
-async function createTransporter() {
-    const settings = await getSmtpSettings();
+async function createTransporter(settings) {
     if (!settings) return null;
 
     const port = parseInt(settings.smtp_port) || 587;
@@ -81,6 +80,9 @@ async function createTransporter() {
         host: settings.smtp_host,
         port,
         secure,
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 20000,
         tls: {
             rejectUnauthorized: !ignoreTls
         }
@@ -100,14 +102,14 @@ async function createTransporter() {
 /**
  * Send an email. Returns true on success, throws on failure.
  */
-async function sendEmail(to, subject, html) {
-    const settings = await getSmtpSettings();
+async function sendEmail(to, subject, html, db = pool) {
+    const settings = await getSmtpSettings(db);
     if (!settings) {
         console.log('[Email] SMTP not configured, skipping email.');
         return false;
     }
 
-    const transporter = await createTransporter();
+    const transporter = await createTransporter(settings);
     if (!transporter) return false;
 
     const senderName = settings.smtp_sender || 'FileTracker';
@@ -157,7 +159,7 @@ async function sendTestEmail(toAddress) {
 /**
  * Send an SLA overdue email notification.
  */
-async function sendOverdueEmail(officerEmail, officerName, prNumber, title, stepName, daysOverdue) {
+async function sendOverdueEmail(officerEmail, officerName, prNumber, title, stepName, daysOverdue, db = pool) {
     const html = `
         <div style="font-family: 'Inter', Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px; background: #1e1e2d; border-radius: 12px; color: #ffffff;">
             <div style="text-align: center; margin-bottom: 24px;">
@@ -185,7 +187,7 @@ async function sendOverdueEmail(officerEmail, officerName, prNumber, title, step
     `;
 
     try {
-        await sendEmail(officerEmail, `⚠️ SLA Overdue: ${prNumber} — ${stepName}`, html);
+        await sendEmail(officerEmail, `⚠️ SLA Overdue: ${prNumber} — ${stepName}`, html, db);
     } catch (err) {
         // Log but don't crash
         console.error(`[Email] Overdue email failed for ${officerEmail}:`, err.message);
@@ -230,7 +232,7 @@ async function sendAssignmentEmail(officerEmail, officerName, prNumber, title, p
 /**
  * Send a contract expiry email.
  */
-async function sendContractExpiryEmail(leaderEmail, leaderName, prNumber, fileTitle, contractNumber, contractorName, endDate, daysLeft) {
+async function sendContractExpiryEmail(leaderEmail, leaderName, prNumber, fileTitle, contractNumber, contractorName, endDate, daysLeft, db = pool) {
     const html = `
         <div style="font-family: 'Inter', Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px; background: #1e1e2d; border-radius: 12px; color: #ffffff;">
             <div style="text-align: center; margin-bottom: 24px;">
@@ -258,7 +260,7 @@ async function sendContractExpiryEmail(leaderEmail, leaderName, prNumber, fileTi
     `;
 
     try {
-        await sendEmail(leaderEmail, `⏳ Contract Expiring in ${daysLeft} days: ${prNumber}`, html);
+        await sendEmail(leaderEmail, `⏳ Contract Expiring in ${daysLeft} days: ${prNumber}`, html, db);
     } catch (err) {
         console.error(`[Email] Expiry email failed for ${leaderEmail}:`, err.message);
     }

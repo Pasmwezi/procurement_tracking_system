@@ -38,9 +38,10 @@ function normalizeTransfers(fromOfficerId, transfers) {
     });
 }
 
-async function executeFileTransfers(pool, { fromOfficerId, transfers, userId, teamId, ipAddress = null }) {
+async function executeFileTransfers(pool, { fromOfficerId, transfers, userId, teamId, allowCrossTeam = false, ipAddress = null }) {
     const sourceId = positiveInteger(fromOfficerId, 'Source officer ID');
     const normalized = normalizeTransfers(sourceId, transfers);
+    const scopedTeamId = allowCrossTeam ? null : positiveInteger(teamId, 'Team ID');
     const fileIds = normalized.map(item => item.fileId);
     const targetIds = [...new Set(normalized.map(item => item.toOfficerId))];
     const client = await pool.connect();
@@ -51,16 +52,20 @@ async function executeFileTransfers(pool, { fromOfficerId, transfers, userId, te
         transactionStarted = true;
 
         const sourceResult = await client.query(
-            "SELECT id, email, display_name AS name FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE AND team_id = $2 FOR SHARE",
-            [sourceId, teamId]
+            `SELECT id, email, display_name AS name FROM users
+             WHERE id = $1 AND role = 'officer' AND is_active = TRUE
+             ${allowCrossTeam ? '' : 'AND team_id = $2'} FOR SHARE`,
+            allowCrossTeam ? [sourceId] : [sourceId, scopedTeamId]
         );
         if (sourceResult.rowCount === 0) {
             throw new TransferValidationError('Source officer was not found or is inactive', 404);
         }
 
         const targetResult = await client.query(
-            "SELECT id, email, display_name AS name FROM users WHERE id = ANY($1::int[]) AND role = 'officer' AND is_active = TRUE AND team_id = $2 FOR SHARE",
-            [targetIds, teamId]
+            `SELECT id, email, display_name AS name FROM users
+             WHERE id = ANY($1::int[]) AND role = 'officer' AND is_active = TRUE
+             ${allowCrossTeam ? '' : 'AND team_id = $2'} FOR SHARE`,
+            allowCrossTeam ? [targetIds] : [targetIds, scopedTeamId]
         );
         const targetsById = new Map(targetResult.rows.map(row => [row.id, row]));
         if (targetsById.size !== targetIds.length) {

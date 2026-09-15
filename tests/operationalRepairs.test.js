@@ -39,8 +39,14 @@ test('SMTP test fails honestly when sendEmail reports no delivery', () => {
 
 test('contract expiry notifications include the required current step', () => {
     const source = read('services/slaChecker.js');
+    const server = read('server.js');
+    const email = read('services/emailService.js');
     assert.match(source, /f\.current_step_id/);
-    assert.match(source, /INSERT INTO notifications \(file_id, officer_id, step_id, message\)/);
+    assert.match(source, /INSERT INTO notifications \(file_id, officer_id, step_id, message/);
+    assert.match(source, /FOR UPDATE OF c, f/);
+    assert.match(source, /contract_id = \$1/);
+    assert.match(server, /idx_notifications_contract_expiry/);
+    assert.match(email, /connectionTimeout/);
 });
 
 test('file creation validates owner, exact start step, and terminal status', () => {

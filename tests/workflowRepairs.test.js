@@ -24,7 +24,7 @@ if (!process.env.WORKFLOW_TEST_DATABASE_URL) {
     test.before(async () => {
         await pool.query(`CREATE SEQUENCE fixture_seq;
             CREATE TABLE users(id int PRIMARY KEY, display_name text, email text, role text, is_active boolean, team_id int, updated_at timestamp, password_hash text, password_changed boolean DEFAULT true, token_version int NOT NULL DEFAULT 0);
-            INSERT INTO users(id,display_name,email,role,is_active,team_id) VALUES (1,'Leader',null,'team_leader',true,1),(2,'Officer',null,'officer',true,1),(3,'Other',null,'officer',true,2),(4,'Inactive',null,'officer',false,1);
+            INSERT INTO users(id,display_name,email,role,is_active,team_id) VALUES (1,'Leader',null,'team_leader',true,1),(2,'Officer',null,'officer',true,1),(3,'Other',null,'officer',true,2),(4,'Inactive',null,'officer',false,1),(9,'Admin',null,'admin',true,null);
             CREATE TABLE process_steps(id int PRIMARY KEY, process_name text, step_name text, step_order int, sla_days int);
             INSERT INTO process_steps VALUES(1,'P','Start',1,1);
             CREATE TABLE files(id serial PRIMARY KEY, pr_number text UNIQUE, title text, process_name text, officer_id int, current_step_id int, step_started_at timestamp, created_at timestamp, estimated_value numeric, status text DEFAULT 'Active', completed_at timestamp);
@@ -33,7 +33,7 @@ if (!process.env.WORKFLOW_TEST_DATABASE_URL) {
             CREATE TABLE triage_missing_docs(id serial PRIMARY KEY,triage_file_id int,document_name text,provided boolean DEFAULT false);
             CREATE TABLE triage_status_history(id serial PRIMARY KEY,triage_file_id int,from_status text,to_status text,changed_by int,note text);
             CREATE TABLE audit_log(user_id int,action text,entity_type text,entity_id int,old_value jsonb,new_value jsonb,ip_address text);
-            CREATE TABLE notifications(id serial PRIMARY KEY,officer_id int,is_read boolean DEFAULT false);`);
+            CREATE TABLE notifications(id serial PRIMARY KEY,file_id int,officer_id int,is_read boolean DEFAULT false);`);
         const app = express(); app.use(express.json()); app.use(cookieParser());
         app.use((req, res, next) => { req.user = { id: Number(req.headers['x-id']), role: req.headers['x-role'], teamId: 1 }; next(); });
         app.use('/triage', require('../routes/triage'));
@@ -105,6 +105,29 @@ if (!process.env.WORKFLOW_TEST_DATABASE_URL) {
         assert.equal((await req(`/notifications/${other.id}/read`, 'PUT', {})).status, 404);
         await req('/notifications/read-all', 'PUT', {});
         assert.equal((await pool.query('SELECT is_read FROM notifications WHERE id=$1', [other.id])).rows[0].is_read, false);
+    });
+    test('administrator can transfer an active file across teams while team leader cannot', async () => {
+        const file = (await pool.query("INSERT INTO files(pr_number,title,process_name,officer_id,current_step_id,status,created_at) VALUES ('PR-XTEAM','Cross team','P',2,1,'Active',NOW()) RETURNING id")).rows[0];
+
+        assert.equal((await req('/officers/2/transfer-candidates', 'GET', undefined, 'admin', 9)).status, 200);
+        const adminTransfer = await req('/officers/2/transfer', 'PUT', {
+            transfers: [{ file_id: file.id, to_officer_id: 3 }]
+        }, 'admin', 9);
+        assert.equal(adminTransfer.status, 200);
+        assert.equal((await pool.query('SELECT officer_id FROM files WHERE id=$1', [file.id])).rows[0].officer_id, 3);
+        const audit = await pool.query("SELECT old_value,new_value FROM audit_log WHERE action='file.transfer' AND entity_id=$1", [file.id]);
+        assert.equal(audit.rowCount, 1);
+        assert.equal(audit.rows[0].old_value.officer_id, 2);
+        assert.equal(audit.rows[0].new_value.officer_id, 3);
+
+        await pool.query('UPDATE files SET officer_id=2 WHERE id=$1', [file.id]);
+        const leaderTransfer = await req('/officers/2/transfer', 'PUT', {
+            transfers: [{ file_id: file.id, to_officer_id: 3 }],
+            allowCrossTeam: true
+        });
+        assert.equal(leaderTransfer.status, 400);
+        assert.equal((await pool.query('SELECT officer_id FROM files WHERE id=$1', [file.id])).rows[0].officer_id, 2);
+        assert.equal((await req('/officers/2/transfer', 'PUT', { transfers: [] }, 'officer', 2)).status, 403);
     });
     test('import skips a failed row without rolling back reported successes', async () => {
         const wb = XLSX.utils.book_new();
