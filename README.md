@@ -1,25 +1,97 @@
-# 📁 Procurement File Tracking System
+# Procurement Tracking System
 
-A Dockerized web application for team leaders to track procurement files assigned to contracting officers, enforce SLA deadlines, and manage multi-step procurement workflows.
+A self-hosted operations application for managing procurement work from intake and triage through solicitation, evaluation, contract award, and close-out.
 
----
+The system gives procurement teams a shared, auditable view of every file: who owns it, which workflow step it has reached, how long that step should take, what is overdue, what documentation is missing, and what decisions were recorded. It is designed for internal procurement units that need more structure and accountability than a spreadsheet or shared mailbox, without adopting a large commercial procurement suite.
 
-## ✨ Features
+> **Scope:** This is an internal file-management and workflow-tracking system. It is not a public tendering portal, supplier self-service portal, financial system of record, or substitute for an organization's procurement policies and delegated authorities.
 
-- **Dashboard** — At-a-glance stats (total, active, overdue, completed files), officer workload chart, and recent files
-- **Triage Intake** — Team Leaders can log files pre-procurement, track missing documents, and assign them to start a process
-- **File Management** — Create, view, advance, cancel, and track procurement files through multi-step workflows
-- **5 Procurement Processes** — Sole Source (7 steps), Two Phase Solicitation (17 steps), One Phase Solicitation (11 steps), Service Solicitation Above TA (12 steps), Service Solicitation Under TA (11 steps)
-- **Step Timeline** — Visual timeline for each file showing SLA status per step (met, overdue, pending)
-- **Step Comments** — Add or edit notes on any step to document progress and SLA compliance
-- **SLA Enforcement** — Automatic hourly SLA checks via cron, with manual trigger option
-- **Overdue Notifications** — In-app notification center for overdue files
-- **User & Team Management** — Role-based access (Admin, Team Leader, Officer) with team organization
-- **File Transfer** — Reassign files between officers (per-file target selection)
-- **Past File Import** — Backdate files with a custom assignment date and starting step; prior steps are auto-completed with realistic timestamps
-- **Email Notifications** — Automated emails sent to officers upon file assignment utilizing customizable SMTP configuration
-- **Authentication** — JWT-based login with forced password change on first sign-in for Admins
-- **Dark-Themed UI** — Modern, responsive single-page interface
+## What the project addresses
+
+Procurement files commonly move between clients, contracting officers, team leaders, evaluators, and vendors over many weeks or months. When tracking is spread across email, spreadsheets, and personal notes, teams can lose visibility into:
+
+- whether an intake package is complete;
+- who is responsible for the next action;
+- how long a file has remained at a workflow step;
+- which files are late or at risk;
+- why a file was transferred, cancelled, or advanced;
+- which bids and financial values supported an award decision; and
+- what contracts or purchase orders resulted from the procurement.
+
+This application centralizes those operational records and applies role-aware workflows, SLA monitoring, validation, notifications, and audit logging.
+
+## Procurement lifecycle
+
+```text
+Request intake
+    ↓
+Triage and missing-document follow-up
+    ↓
+Assignment to a contracting officer and workflow
+    ↓
+Drafting, review, solicitation, and evaluation steps
+    ↓
+Bid evaluation and award decision
+    ↓
+Contract / purchase-order tracking
+    ↓
+Completion, reporting, and audit history
+```
+
+A file follows an ordered procurement process. Each process contains configurable steps and an expected number of days per step. The application records step start and completion times, comments, ownership changes, and lifecycle decisions so that current status and historical context remain visible.
+
+## Main capabilities
+
+### Intake and triage
+
+- Register requests before formal procurement work starts.
+- Record estimated value, business owner, notes, and missing documents.
+- Track whether required documents have been received.
+- Import and export triage records using Excel.
+- Assign a complete intake record to an officer and create the corresponding procurement file.
+- Keep triage status synchronized when a linked procurement is awarded or cancelled.
+
+### Procurement file management
+
+- Create, search, filter, and review procurement files by status, process, officer, or team.
+- Move active files through controlled, ordered process steps.
+- Record comments and timestamps against the step history.
+- Backdate imported files and initialize them at the correct current step.
+- Explicitly complete or cancel work while preserving its history.
+- Transfer one or more active files between officers with validation and audit records.
+
+### Workflow and service-level tracking
+
+- Five seeded workflows cover sole-source, one-phase, two-phase, and services solicitations above or below the trade-agreement threshold.
+- Administrators can maintain process steps, ordering, and SLA durations.
+- An hourly background job identifies overdue work and creates notifications.
+- Dashboards summarize active, completed, cancelled, and overdue files, along with officer workload.
+
+### Vendors, bids, awards, and contracts
+
+- Maintain vendor records used in bid and contract activity.
+- Record bid amounts and technical and financial scores.
+- Validate evaluation values and identify the selected bid.
+- Track resulting contracts and purchase orders, including key dates and values.
+- Report on procurement workload, lifecycle status, and operational outcomes.
+
+### Administration and accountability
+
+- Organize users into teams with administrator, team-leader, and officer roles.
+- Scope operational access and actions according to role, ownership, and team.
+- Configure email delivery for assignment and operational notifications.
+- Preserve an audit trail for material administrative and procurement actions.
+- Revoke active sessions when passwords or account state change.
+
+## Roles
+
+| Role | Primary responsibilities |
+|---|---|
+| **Administrator** | Configure teams, users, procurement processes, application settings, and cross-team administration. |
+| **Team Leader** | Manage team intake, assign and transfer files, control workflow progression, oversee evaluations, and access team reporting. |
+| **Contracting Officer** | Work assigned files, review their timelines and notifications, maintain permitted file details, and record bid-related information. |
+
+Authorization is enforced by the API. Hiding a control in the browser is not treated as a security boundary.
 
 ---
 
@@ -43,8 +115,8 @@ A Dockerized web application for team leaders to track procurement files assigne
 │  ┌──────────┐  ┌────────────────┐  │
 │  │ Auth JWT │  │ SLA Cron (1hr) │  │
 │  └──────────┘  └────────────────┘  │
-│  Routes: auth, files, officers,    │
-│  processes, notifications          │
+│  Auth, triage, files, bids,         │
+│  contracts, reports, administration│
 └──────────────┬─────────────────────┘
                │ pg (TCP :5432)
 ┌──────────────▼─────────────────────┐
@@ -52,7 +124,8 @@ A Dockerized web application for team leaders to track procurement files assigne
 │  Tables: users, teams, files,      │
 │  processes, process_steps,         │
 │  file_step_log, notifications,     │
-│  triage_files, triage_missing_docs │
+│  triage, vendors, bids, contracts,  │
+│  purchase orders, audit records     │
 └────────────────────────────────────┘
 ```
 
@@ -84,7 +157,7 @@ export ADMIN_INITIAL_PASSWORD="$(openssl rand -base64 36)"
 docker compose up --build -d
 ```
 
-The app will be available at **http://localhost:3000**
+The included Compose configuration publishes the app at **http://localhost:3006**. The application container itself listens on port `3000`.
 
 ### Initial Administrator
 
@@ -105,7 +178,7 @@ docker compose down -v     # Stop containers and delete all data
 ## 📖 Usage Guide
 
 ### 1. Sign In
-Navigate to `http://localhost:3000` and log in with the administrator credentials supplied during first startup.
+Navigate to `http://localhost:3006` and log in with the administrator credentials supplied during first startup.
 
 ### 2. User & Team Management (Admin)
 Go to **Administration**. Admins can create Teams and add Users, assigning them roles of **Team Leader**, **Officer**, or **Admin**.
@@ -139,7 +212,7 @@ On the **Officers** page, Team Leaders can click **Transfer Files** on an office
 
 ## 🔌 API Reference
 
-All API routes (except `/api/auth/login` and `/api/health`) require a JWT token in the `Authorization: Bearer <token>` header.
+Except for the intended authentication and health endpoints, API routes require authentication. Authorization is further restricted by role, team, ownership, and file state.
 
 ### Authentication
 
