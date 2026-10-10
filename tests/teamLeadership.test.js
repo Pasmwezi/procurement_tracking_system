@@ -14,6 +14,12 @@ function source(relativePath) {
     return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
 }
 
+test('PG-5 updated workspace does not reuse the pre-PG5 app cache key', () => {
+    const html = source('public/index.html');
+    assert.doesNotMatch(html, /src="\/js\/app\.js\?v=5\.1"/);
+    assert.match(html, /src="\/js\/app\.js\?v=[^"]+"/);
+});
+
 test('triage recommendation deterministically maps value and complexity', () => {
     assert.equal(recommendOfficerClassification('High', 'High'), 'PG-4');
     assert.equal(recommendOfficerClassification('Low', 'Low'), 'PG-2');

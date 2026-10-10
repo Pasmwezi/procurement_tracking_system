@@ -4773,24 +4773,40 @@ function teamLeadershipOptions(rows) {
     return rows.map(o => `<option value="${o.id}">${escapeHtml(o.name)} — ${escapeHtml(o.officer_classification || 'Unclassified')}</option>`).join('');
 }
 
+async function loadPg5ActiveFiles() {
+    const files = [];
+    let page = 1;
+    let total;
+    do {
+        const payload = await api(`/api/files?status=Active&limit=100&page=${page}`);
+        files.push(...normalizeFilesResponse(payload));
+        total = payload.total;
+        page++;
+    } while (files.length < total);
+    return files.filter(file => file.status === 'Active');
+}
+
+function renderPg5ReviewChoices(files, metadata, fileId, gateId) {
+    $(`#${fileId}`).innerHTML = '<option value="">Select an active file</option>' + files.map(file =>
+        `<option value="${file.id}">${escapeHtml(file.pr_number)} — ${escapeHtml(file.title)}</option>`
+    ).join('');
+    $(`#${gateId}`).innerHTML = metadata.review_gates.map(gate =>
+        `<option value="${escapeHtml(gate)}">${escapeHtml(gate)}</option>`
+    ).join('');
+}
+
 async function loadTeamLeadership() {
     if (!currentUser || !['admin', 'team_leader', 'officer'].includes(currentUser.role)) return;
     const error = $('#teamLeadershipError');
     error.style.display = 'none';
     try {
         if (currentUser.role === 'officer') {
-            const [reviews, filesPayload, metadata] = await Promise.all([
+            const [reviews, files, metadata] = await Promise.all([
                 api('/api/team-leadership/reviews'),
-                api('/api/files?status=Active&limit=500'),
+                loadPg5ActiveFiles(),
                 api('/api/team-leadership/metadata')
             ]);
-            const files = normalizeFilesResponse(filesPayload).filter(file => file.status === 'Active');
-            $('#tlReviewFile').innerHTML = files.map(file =>
-                `<option value="${file.id}">${escapeHtml(file.pr_number)} — ${escapeHtml(file.title)}</option>`
-            ).join('');
-            $('#tlReviewGate').innerHTML = metadata.review_gates.map(gate =>
-                `<option value="${escapeHtml(gate)}">${escapeHtml(gate)}</option>`
-            ).join('');
+            renderPg5ReviewChoices(files, metadata, 'tlReviewFile', 'tlReviewGate');
             $('#tlReviewsBody').innerHTML = reviews.length ? reviews.map(review => {
                 const control = review.status === 'returned'
                     ? `<button class="btn btn-primary btn-sm" onclick="resubmitPg5Review(${review.id})">Resubmit</button>`
@@ -4800,14 +4816,17 @@ async function loadTeamLeadership() {
             return;
         }
 
-        const [summary, reviews, checkins, actions, checkpoints, officers] = await Promise.all([
+        const [summary, reviews, checkins, actions, checkpoints, officers, files, metadata] = await Promise.all([
             api('/api/team-leadership/management-summary'),
             api('/api/team-leadership/reviews'),
             api('/api/team-leadership/weekly-checkins'),
             api('/api/team-leadership/business-owner-actions'),
             api('/api/team-leadership/performance-checkpoints'),
-            api('/api/officers')
+            api('/api/officers'),
+            loadPg5ActiveFiles(),
+            api('/api/team-leadership/metadata')
         ]);
+        renderPg5ReviewChoices(files, metadata, 'tlCompletedReviewFile', 'tlCompletedReviewGate');
         teamLeadershipOfficers = officers || [];
         $('#tlActiveFiles').textContent = summary.portfolio.active;
         $('#tlPendingReviews').textContent = summary.reviews.pending;
@@ -4882,6 +4901,22 @@ async function completeBusinessOwnerAction(actionId, completed) {
     } catch (err) { showToast(err.message, 'error'); }
 }
 window.completeBusinessOwnerAction = completeBusinessOwnerAction;
+
+$('#formPg5CompletedReview')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const button = e.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+        await api('/api/team-leadership/reviews', { method: 'POST', body: JSON.stringify({
+            file_id: Number($('#tlCompletedReviewFile').value), gate: $('#tlCompletedReviewGate').value,
+            status: $('#tlCompletedReviewOutcome').value, decision_note: $('#tlCompletedReviewNote').value
+        }) });
+        $('#tlCompletedReviewNote').value = '';
+        showToast('Completed review recorded');
+        await loadTeamLeadership();
+    } catch (err) { showToast(err.message, 'error'); }
+    finally { button.disabled = false; }
+});
 
 $('#formPg5ReviewSubmission')?.addEventListener('submit', async e => {
     e.preventDefault();

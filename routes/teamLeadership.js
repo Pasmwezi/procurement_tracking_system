@@ -156,8 +156,18 @@ router.post('/reviews', [
     body('file_id').isInt({ min: 1 }),
     body('gate').isIn(REVIEW_GATES),
     body('submission_note').optional({ nullable: true }).isString(),
+    body('status').optional().isIn(['submitted', 'cleared', 'conditionally cleared']),
+    body('decision_note').optional({ nullable: true }).isString(),
     validateRequest
 ], async (req, res) => {
+    const status = req.body.status || 'submitted';
+    const completed = status !== 'submitted';
+    if (completed && !isLeader(req.user)) {
+        return res.status(403).json({ error: 'Only leaders can record completed reviews' });
+    }
+    if (completed && !req.body.decision_note?.trim()) {
+        return res.status(400).json({ error: 'A decision note is required for completed reviews' });
+    }
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -178,13 +188,27 @@ router.post('/reviews', [
             await client.query('ROLLBACK');
             return res.status(403).json({ error: 'Only an active file in your ownership or team can be submitted' });
         }
+        // The file lock serializes creation with submissions for the same file.
+        if (completed) {
+            const active = await client.query(
+                `SELECT id FROM pg5_reviews WHERE file_id=$1 AND gate=$2
+                 AND status IN ('submitted','reviewing','returned','resubmitted')`,
+                [req.body.file_id, req.body.gate]
+            );
+            if (active.rowCount) {
+                await client.query('ROLLBACK');
+                return res.status(409).json({ error: 'An active review already exists; update its status in the review queue' });
+            }
+        }
         const result = await client.query(
-            `INSERT INTO pg5_reviews (file_id, gate, status, submitted_by, submission_note)
-             VALUES ($1, $2, 'submitted', $3, $4) RETURNING *`,
-            [req.body.file_id, req.body.gate, req.user.id, req.body.submission_note?.trim() || null]
+            `INSERT INTO pg5_reviews
+             (file_id, gate, status, submitted_by, submission_note, decided_by, decision_note, decided_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $6::integer IS NOT NULL THEN NOW() ELSE NULL END) RETURNING *`,
+            [req.body.file_id, req.body.gate, status, req.user.id, req.body.submission_note?.trim() || null,
+                completed ? req.user.id : null, completed ? req.body.decision_note.trim() : null]
         );
         await logAction({
-            userId: req.user.id, action: 'pg5_review.submit', entityType: 'pg5_review',
+            userId: req.user.id, action: completed ? 'pg5_review.record_completed' : 'pg5_review.submit', entityType: 'pg5_review',
             entityId: result.rows[0].id, newValue: result.rows[0], ipAddress: req.ip,
             db: client, required: true
         });

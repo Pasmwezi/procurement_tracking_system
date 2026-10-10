@@ -99,12 +99,100 @@ if (!process.env.PG5_TEST_DATABASE_URL) {
         await pool.end();
     });
 
+    test('leaders record completed reviews with decision identity and transactional audit', async () => {
+        const response = await request('/team-leadership/reviews', 'POST', {
+            file_id: 100, gate: 'close-out', status: 'cleared', decision_note: 'Completed verification'
+        });
+        assert.equal(response.status, 201);
+        assert.equal(response.data.status, 'cleared');
+        assert.equal(response.data.decided_by, 10);
+        assert.ok(response.data.decided_at);
+        assert.equal(response.data.decision_note, 'Completed verification');
+        const saved = await pool.query('SELECT * FROM pg5_reviews WHERE id=$1', [response.data.id]);
+        assert.equal(saved.rows[0].status, 'cleared');
+        const audit = await pool.query("SELECT * FROM audit_log WHERE action='pg5_review.record_completed' AND entity_id=$1", [response.data.id]);
+        assert.equal(audit.rowCount, 1);
+        assert.equal(audit.rows[0].new_value.status, 'cleared');
+        await pool.query('DELETE FROM pg5_reviews WHERE id=$1', [response.data.id]);
+    });
+
     test('officers can list only reviews for files they currently own', async () => {
         await pool.query("INSERT INTO pg5_reviews(file_id,gate,status,submitted_by) VALUES(100,'strategy','returned',20)");
         const response = await request('/team-leadership/reviews', 'GET', undefined, 'officer', 20, 1);
         assert.equal(response.status, 200);
         assert.equal(response.data.length, 1);
         assert.equal(response.data[0].file_id, 100);
+    });
+
+    test('completed recording cannot bypass an existing active review', async () => {
+        const response = await request('/team-leadership/reviews', 'POST', {
+            file_id: 100, gate: 'strategy', status: 'cleared', decision_note: 'Must decide the existing review'
+        });
+        assert.equal(response.status, 409);
+        assert.equal((await pool.query("SELECT id FROM pg5_reviews WHERE file_id=100 AND gate='strategy'")).rowCount, 1);
+    });
+
+    test('completed review creation enforces role, team, active file and input boundaries', async () => {
+        await pool.query("INSERT INTO files VALUES (102,'PR-102','Other team',31,1,'Active'),(103,'PR-103','Closed',20,1,'Completed')");
+        const payload = { file_id: 100, gate: 'other', status: 'cleared', decision_note: 'Decision' };
+        for (const status of ['cleared', 'conditionally cleared']) {
+            assert.equal((await request('/team-leadership/reviews', 'POST', { ...payload, status }, 'officer', 20, 1)).status, 403);
+        }
+        assert.equal((await request('/team-leadership/reviews', 'POST', { ...payload, file_id: 102 })).status, 403);
+        assert.equal((await request('/team-leadership/reviews', 'POST', { ...payload, file_id: 103 })).status, 403);
+        for (const change of [{ decision_note: '' }, { decision_note: '  ' }, { decision_note: null }, { status: 'reviewing' }, { status: null }, { gate: 'invalid' }]) {
+            assert.equal((await request('/team-leadership/reviews', 'POST', { ...payload, ...change })).status, 400);
+        }
+        assert.equal((await pool.query("SELECT id FROM pg5_reviews WHERE gate='other'")).rowCount, 0);
+        const admin = await request('/team-leadership/reviews', 'POST', { ...payload, file_id: 102, status: 'conditionally cleared' }, 'admin', 10, 1);
+        assert.equal(admin.status, 201);
+        assert.equal(admin.data.status, 'conditionally cleared');
+        assert.equal(admin.data.decided_by, 10);
+        await pool.query('DELETE FROM pg5_reviews WHERE id=$1', [admin.data.id]);
+    });
+
+    test('completed recording rolls back when required audit fails', async () => {
+        await pool.query(`CREATE FUNCTION reject_completed_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+            IF NEW.action='pg5_review.record_completed' THEN RAISE EXCEPTION 'QA audit failure'; END IF;
+            RETURN NEW; END $$;
+            CREATE TRIGGER reject_completed_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_completed_audit()`);
+        try {
+            const response = await request('/team-leadership/reviews', 'POST', { file_id: 100, gate: 'other', status: 'cleared', decision_note: 'Audited decision' });
+            assert.equal(response.status, 500);
+            assert.equal((await pool.query("SELECT id FROM pg5_reviews WHERE gate='other'")).rowCount, 0);
+        } finally {
+            await pool.query('DROP TRIGGER reject_completed_audit ON audit_log; DROP FUNCTION reject_completed_audit()');
+        }
+    });
+
+    test('completed recording rechecks scope after a concurrent team transfer', async () => {
+        const blocker = await pool.connect();
+        let pending;
+        try {
+            await blocker.query('BEGIN');
+            await blocker.query('SELECT id FROM users WHERE id=20 FOR UPDATE');
+            pending = request('/team-leadership/reviews', 'POST', { file_id: 100, gate: 'other', status: 'cleared', decision_note: 'Must not cross teams' });
+            let waiting = false;
+            for (let i = 0; i < 100; i++) {
+                if ((await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'")).rowCount) { waiting = true; break; }
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            assert.equal(waiting, true);
+            await blocker.query('UPDATE users SET team_id=2 WHERE id=20');
+            await blocker.query('COMMIT');
+            assert.equal((await pending).status, 403);
+            assert.equal((await pool.query("SELECT id FROM pg5_reviews WHERE gate='other'")).rowCount, 0);
+        } finally {
+            await blocker.query('ROLLBACK');
+            blocker.release();
+            if (pending) await pending;
+            await pool.query('UPDATE users SET team_id=1 WHERE id=20');
+        }
+    });
+
+    test('officers cannot self-clear submitted reviews', async () => {
+        const existing = await pool.query("SELECT id FROM pg5_reviews WHERE file_id=100 AND gate='strategy'");
+        assert.equal((await request(`/team-leadership/reviews/${existing.rows[0].id}/status`, 'PUT', { status: 'cleared' }, 'officer', 20, 1)).status, 409);
     });
 
     test('a file and gate cannot have two active PG-5 reviews', async () => {

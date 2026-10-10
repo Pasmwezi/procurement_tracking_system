@@ -735,6 +735,18 @@
                 </form>
             </div>
 
+            <div class="card" style="margin-top:20px;padding:20px;" data-roles="admin team_leader">
+                <h2>Record a Completed PG-5 Review</h2>
+                <p class="form-hint">Select an active team file and record your completed review. For an existing submission, update its status in the queue instead.</p>
+                <form id="formPg5CompletedReview" class="form-grid">
+                    <label>Active file<select id="tlCompletedReviewFile" class="select-input" required></select></label>
+                    <label>Review gate<select id="tlCompletedReviewGate" class="select-input" required></select></label>
+                    <label>Outcome<select id="tlCompletedReviewOutcome" class="select-input" required><option value="cleared">Cleared</option><option value="conditionally cleared">Conditionally cleared</option></select></label>
+                    <label>Decision note<textarea id="tlCompletedReviewNote" class="text-input" required placeholder="Record the review decision and any conditions"></textarea></label>
+                    <button class="btn btn-primary" type="submit">Record completed review</button>
+                </form>
+            </div>
+
             <div class="card" style="margin-top:20px;padding:20px;">
                 <h2>PG-5 Review Queue</h2>
                 <p class="form-hint">Strategy, pre-solicitation, addendum, evaluation approach, pre-award, amendment, change order, extension of time, payment/holdback, close-out and other gates.</p>
@@ -1909,7 +1921,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="/js/clientPayloads.js?v=1.0"></script>
-    <script src="/js/app.js?v=5.1"></script>
+    <script src="/js/app.js?v=5.2"></script>
     <script src="/js/workspace.js"></script>
 </body>
 
