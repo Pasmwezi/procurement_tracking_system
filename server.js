@@ -3,6 +3,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const cron = require('node-cron');
 const path = require('path');
+const fs = require('fs');
 
 const pool = require('./db/pool');
 const { requireAuth, requireRole } = require('./middleware/auth');
@@ -18,6 +19,8 @@ const vendorsRouter = require('./routes/vendors');
 const bidsRouter = require('./routes/bids');
 const purchaseOrdersRouter = require('./routes/purchaseOrders');
 const reportsRouter = require('./routes/reports');
+const teamLeadershipRouter = require('./routes/teamLeadership');
+const { validatePg5Schema, recordSchemaRevision } = require('./services/schemaReadiness');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,10 +37,11 @@ app.use('/api/auth', authRouter);
 // Health check (public)
 app.get('/api/health', async (req, res) => {
     try {
-        await pool.query('SELECT 1');
+        await validatePg5Schema(pool, { requireRevision: true });
         res.json({ status: 'ok', timestamp: new Date().toISOString() });
     } catch (err) {
-        res.status(500).json({ status: 'error', message: err.message });
+        console.error('[Health] Database readiness check failed:', err.message);
+        res.status(503).json({ status: 'error', message: 'Database unavailable' });
     }
 });
 
@@ -56,6 +60,7 @@ app.use('/api/vendors', requireAuth, requireRole('admin', 'team_leader', 'office
 app.use('/api/bids', requireAuth, requireRole('admin', 'team_leader', 'officer'), bidsRouter);
 app.use('/api/purchase-orders', requireAuth, requireRole('admin', 'team_leader', 'officer'), purchaseOrdersRouter);
 app.use('/api/reports', requireAuth, requireRole('admin', 'team_leader'), reportsRouter);
+app.use('/api/team-leadership', requireAuth, requireRole('admin', 'team_leader', 'officer'), teamLeadershipRouter);
 
 // Manual SLA check trigger (team_leader only)
 app.post('/api/sla-check', requireAuth, requireRole('team_leader'), async (req, res) => {
@@ -306,6 +311,13 @@ async function start() {
                 created_at TIMESTAMP DEFAULT NOW()
             )
         `);
+        const pg5Migration = fs.readFileSync(
+            path.join(__dirname, 'db', 'migrate-v5-team-leadership.sql'),
+            'utf8'
+        );
+        await pool.query(pg5Migration);
+        await validatePg5Schema(pool);
+        await recordSchemaRevision(pool);
         console.log('✅ Migrations applied');
     } catch (err) {
         console.error('❌ Migration failed:', err.message);

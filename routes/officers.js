@@ -22,7 +22,7 @@ router.get('/', async (req, res) => {
 
         const result = await pool.query(
             `SELECT u.id, u.email, u.display_name AS name, u.team_id, u.is_active,
-                    t.name AS team_name,
+                    u.officer_classification, t.name AS team_name,
                     (SELECT COUNT(*) FROM files f WHERE f.officer_id = u.id) AS file_count,
                     (SELECT COUNT(*) FROM files f WHERE f.officer_id = u.id AND f.status = 'Active') AS active_count,
                     (SELECT COUNT(*) FROM files f WHERE f.officer_id = u.id AND f.status = 'Completed') AS completed_count

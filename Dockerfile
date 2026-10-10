@@ -1,21 +1,21 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 
 WORKDIR /app
 
 # Copy package and lockfiles to leverage Docker layer caching
 COPY package*.json ./
 
-# Install all dependencies
-RUN npm install
+# Install the exact dependency graph captured by the lockfile
+RUN npm ci
 
 # Copy source code
 COPY . .
 
 
-FROM node:20-alpine AS production
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS production
 
 # Add dumb-init to properly handle signals for Node.js
-RUN apk add --no-cache dumb-init
+RUN apk add --no-cache dumb-init=1.2.5-r3
 
 WORKDIR /app
 
@@ -38,10 +38,7 @@ COPY --from=builder /app/routes ./routes
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/services ./services
 
-# Change ownership to the non-root node user
-RUN chown -R node:node /app
-
-# Switch to the non-root user for security
+# Keep code and dependencies root-owned/read-only while running the service unprivileged.
 USER node
 
 # Expose standard port

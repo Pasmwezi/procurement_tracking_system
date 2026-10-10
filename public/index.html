@@ -120,6 +120,12 @@
                 </svg>
                 <span>Officers</span>
             </li>
+            <li class="nav-item" data-page="teamLeadership" data-roles="admin team_leader officer">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"></path>
+                </svg>
+                <span>PG-5 Reviews</span>
+            </li>
             <li class="nav-item" data-page="reports" data-roles="team_leader admin">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="18" y1="20" x2="18" y2="10"></line>
@@ -698,6 +704,86 @@
                 </svg>
                 <p>No officers yet. Add your first contracting officer.</p>
             </div>
+        </section>
+
+        <!-- PG-5 reviews and team-leadership workspace -->
+        <section class="page" id="pageTeamLeadership">
+            <div class="stats-grid" id="teamLeadershipSummary" data-roles="admin team_leader">
+                <div class="stat-card"><div class="stat-info"><span class="stat-value" id="tlActiveFiles">—</span><span class="stat-label">Active portfolio</span></div></div>
+                <div class="stat-card"><div class="stat-info"><span class="stat-value" id="tlPendingReviews">—</span><span class="stat-label">Pending reviews</span></div></div>
+                <div class="stat-card"><div class="stat-info"><span class="stat-value" id="tlOpenActions">—</span><span class="stat-label">Open owner actions</span></div></div>
+            </div>
+
+            <div class="card" style="margin-top:20px;padding:20px;" data-roles="admin team_leader">
+                <h2>Officer Classification</h2>
+                <form id="formOfficerClassification" class="filter-bar">
+                    <select id="tlClassificationOfficer" class="select-input" required></select>
+                    <select id="tlOfficerClassification" class="select-input" required>
+                        <option value="PG-2">PG-2</option><option value="PG-3">PG-3</option><option value="PG-4">PG-4</option>
+                    </select>
+                    <button class="btn btn-primary" type="submit">Save classification</button>
+                </form>
+            </div>
+
+            <div class="card" style="margin-top:20px;padding:20px;" data-roles="officer">
+                <h2>Submit a PG-5 Review</h2>
+                <form id="formPg5ReviewSubmission" data-roles="officer" class="form-grid">
+                    <select id="tlReviewFile" class="select-input" aria-label="Active file" required></select>
+                    <select id="tlReviewGate" class="select-input" aria-label="Review gate" required></select>
+                    <textarea id="tlReviewSubmissionNote" class="text-input" placeholder="Submission note (optional)"></textarea>
+                    <button class="btn btn-primary" type="submit">Submit for review</button>
+                </form>
+            </div>
+
+            <div class="card" style="margin-top:20px;padding:20px;">
+                <h2>PG-5 Review Queue</h2>
+                <p class="form-hint">Strategy, pre-solicitation, addendum, evaluation approach, pre-award, amendment, change order, extension of time, payment/holdback, close-out and other gates.</p>
+                <div class="files-table-wrap"><table class="data-table"><thead><tr><th>File</th><th>Officer</th><th>Gate</th><th>Status</th><th>Updated</th></tr></thead><tbody id="tlReviewsBody"></tbody></table></div>
+            </div>
+
+            <div class="card" style="margin-top:20px;padding:20px;" data-roles="admin team_leader">
+                <h2>Weekly Check-ins</h2>
+                <form id="formWeeklyCheckin" class="form-grid">
+                    <select id="tlCheckinOfficer" class="select-input" required></select>
+                    <input id="tlCheckinWeek" class="text-input" type="date" required>
+                    <textarea id="tlOperationalSummary" class="text-input" placeholder="Operational summary" required></textarea>
+                    <textarea id="tlBlockers" class="text-input" placeholder="Blockers"></textarea>
+                    <textarea id="tlDecisions" class="text-input" placeholder="Decisions"></textarea>
+                    <textarea id="tlActions" class="text-input" placeholder="Actions"></textarea>
+                    <button class="btn btn-primary" type="submit">Save check-in</button>
+                </form>
+                <div id="tlCheckinsList" style="margin-top:16px;"></div>
+            </div>
+
+            <div class="card" style="margin-top:20px;padding:20px;" data-roles="admin team_leader">
+                <h2>Business-owner Actions</h2>
+                <form id="formOwnerAction" class="form-grid">
+                    <input id="tlBusinessOwner" class="text-input" placeholder="Business owner" required>
+                    <select id="tlActionTeam" class="select-input" aria-label="Team" required></select>
+                    <input id="tlActionMonth" class="text-input" type="month" required>
+                    <input id="tlOwnerAction" class="text-input" placeholder="Action" required>
+                    <input id="tlOwnerActionDue" class="text-input" type="date">
+                    <button class="btn btn-primary" type="submit">Add monthly action</button>
+                </form>
+                <div id="tlOwnerActionsList" style="margin-top:16px;"></div>
+            </div>
+
+            <div class="card" style="margin-top:20px;padding:20px;" data-roles="admin team_leader">
+                <h2>Performance Checkpoints</h2>
+                <p class="form-hint">Scheduling only. This area does not collect assessments.</p>
+                <form id="formPerformanceCheckpoint" class="form-grid">
+                    <select id="tlCheckpointOfficer" class="select-input" required></select>
+                    <input id="tlCheckpointYear" class="text-input" type="number" min="2000" max="2200" required>
+                    <select id="tlCheckpointType" class="select-input" required><option value="objective-setting">Objective-setting</option><option value="mid-year">Mid-year</option><option value="year-end">Year-end</option></select>
+                    <input id="tlCheckpointDue" class="text-input" type="date" required>
+                    <input id="tlCheckpointCompletion" class="text-input" type="date" aria-label="Completion date">
+                    <input id="tlCheckpointHr" class="text-input" type="date" aria-label="HR record date">
+                    <input id="tlCheckpointFollowup" class="text-input" type="date" aria-label="Follow-up date">
+                    <button class="btn btn-primary" type="submit">Save schedule</button>
+                </form>
+                <div id="tlCheckpointsList" style="margin-top:16px;"></div>
+            </div>
+            <div class="error-message" id="teamLeadershipError" style="display:none;"></div>
         </section>
 
         <!-- Notifications Page -->
@@ -1672,6 +1758,15 @@
                 <input type="hidden" id="assignTriageId">
                 <div class="triage-assign-info" id="assignTriageInfo"></div>
                 <div class="form-group">
+                    <label for="assignValueClassification">Triage value classification</label>
+                    <select id="assignValueClassification" class="select-input" required><option value="Low">Low</option><option value="High">High</option></select>
+                </div>
+                <div class="form-group">
+                    <label for="assignComplexity">Complexity</label>
+                    <select id="assignComplexity" class="select-input" required><option value="Low">Low</option><option value="High">High</option></select>
+                    <span class="form-hint" id="assignRecommendation"></span>
+                </div>
+                <div class="form-group">
                     <label for="assignTriageProcess">Procurement Process</label>
                     <select id="assignTriageProcess" class="select-input" required></select>
                 </div>
@@ -1683,6 +1778,10 @@
                     <label for="assignTriageDate">Assignment Date <span class="form-hint">(leave blank for
                             today)</span></label>
                     <input type="date" id="assignTriageDate" class="text-input">
+                </div>
+                <div class="form-group">
+                    <label for="assignOverrideRationale">Override rationale <span class="form-hint">(required when the selected officer is unclassified or does not match the recommendation)</span></label>
+                    <textarea id="assignOverrideRationale" class="text-input"></textarea>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-close>Cancel</button>

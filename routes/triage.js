@@ -8,6 +8,7 @@ const { body, query } = require('express-validator');
 const { validateRequest } = require('../middleware/validate');
 const { logAction } = require('../services/auditLogger');
 const { syncTriageAwardStatus } = require('../services/triageProgress');
+const { validateAssignmentMatch } = require('../services/teamLeadership');
 
 // Multer: memory storage (no disk writes)
 const upload = multer({
@@ -521,9 +522,10 @@ router.post('/:id/assign', [
     body('process_name').trim().notEmpty().withMessage('process_name is required'),
     body('assigned_date').optional({ nullable: true }).isISO8601().withMessage('Must be valid date'),
     body('current_step_order').optional({ nullable: true }).isInt(),
+    body('override_rationale').optional({ nullable: true }).isString(),
     validateRequest
 ], async (req, res) => {
-    const { officer_id, process_name, assigned_date, current_step_order } = req.body;
+    const { officer_id, process_name, assigned_date, current_step_order, override_rationale } = req.body;
 
     const client = await pool.connect();
     try {
@@ -539,13 +541,29 @@ router.post('/:id/assign', [
 
         const triageFile = tf.rows[0];
 
+        if (!triageFile.value_classification || !triageFile.complexity || !triageFile.recommended_classification) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Value and complexity classification is required before assignment' });
+        }
+
         const officer = await client.query(
-            "SELECT id, display_name FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE AND team_id = $2 FOR SHARE",
+            "SELECT id, display_name, officer_classification FROM users WHERE id = $1 AND role = 'officer' AND is_active = TRUE AND team_id = $2 FOR SHARE",
             [officer_id, triageFile.team_id]
         );
         if (!officer.rows.length) {
             await client.query('ROLLBACK');
             return res.status(400).json({ error: 'Officer must be active and belong to the intake team' });
+        }
+        let assignmentMatch;
+        try {
+            assignmentMatch = validateAssignmentMatch(
+                triageFile.recommended_classification,
+                officer.rows[0].officer_classification,
+                override_rationale
+            );
+        } catch (error) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: error.message });
         }
 
         // Get process steps
@@ -608,8 +626,10 @@ router.post('/:id/assign', [
 
         // Update triage file status to Assigned and link to file
         await client.query(
-            'UPDATE triage_files SET status = \'Assigned\', file_id = $1, updated_at = NOW() WHERE id = $2',
-            [file.id, req.params.id]
+            `UPDATE triage_files SET status = 'Assigned', file_id = $1,
+             assigned_officer_classification = $2, assignment_override_rationale = $3,
+             updated_at = NOW() WHERE id = $4`,
+            [file.id, officer.rows[0].officer_classification, assignmentMatch.rationale, req.params.id]
         );
 
         // Log assignment
@@ -629,7 +649,14 @@ router.post('/:id/assign', [
             action: 'triage.assign',
             entityType: 'file',
             entityId: file.id,
-            newValue: { pr_number: triageFile.pr_number, officer_id, process_name },
+            newValue: {
+                pr_number: triageFile.pr_number,
+                officer_id,
+                process_name,
+                recommended_classification: triageFile.recommended_classification,
+                selected_classification: officer.rows[0].officer_classification,
+                override_rationale: assignmentMatch.rationale
+            },
             ipAddress: req.ip,
             db: client,
             required: true

@@ -153,8 +153,12 @@ export JWT_SECRET="$(openssl rand -hex 32)"
 export ADMIN_INITIAL_EMAIL="admin@example.ca"
 export ADMIN_INITIAL_PASSWORD="$(openssl rand -base64 36)"
 
-# Build and start
-docker compose up --build -d
+# Build and publish a release image, then pin Compose to the registry digest.
+docker build -t pasmwezi/procurement_tracking_system:RELEASE .
+docker push pasmwezi/procurement_tracking_system:RELEASE
+export APP_IMAGE_DIGEST="$(docker buildx imagetools inspect \
+  pasmwezi/procurement_tracking_system:RELEASE --format '{{.Manifest.Digest}}')"
+docker compose up -d --wait
 ```
 
 The included Compose configuration publishes the app at **http://localhost:3006**. The application container itself listens on port `3000`.
@@ -321,6 +325,7 @@ file_tracking/
 | `DB_PASSWORD`            | Required         | PostgreSQL service password used by Compose      |
 | `DATABASE_URL`           | Required         | PostgreSQL connection string                     |
 | `JWT_SECRET`             | Required         | Strong, unique JWT signing secret                 |
+| `APP_IMAGE_DIGEST`       | Required         | Published application digest (`sha256:…`)         |
 | `ADMIN_INITIAL_EMAIL`    | First startup    | Initial administrator email                      |
 | `ADMIN_INITIAL_PASSWORD` | First startup    | Initial administrator password (minimum 12 chars)|
 | `PORT`                   | `3000`           | Server port                                      |

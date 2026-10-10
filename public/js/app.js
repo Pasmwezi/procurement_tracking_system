@@ -287,6 +287,7 @@ const pageTitles = {
     officers: 'Contracting Officers',
     notifications: 'Notifications',
     reports: 'Executive Dashboard',
+    teamLeadership: 'Team Leader',
     admin: 'Administration'
 };
 
@@ -312,6 +313,7 @@ function navigateTo(page) {
     else if (page === 'officers') loadOfficers();
     else if (page === 'notifications') loadNotifications();
     else if (page === 'reports') loadReports();
+    else if (page === 'teamLeadership') loadTeamLeadership();
     else if (page === 'admin') loadAdmin();
     else if (typeof window[`load${page.charAt(0).toUpperCase() + page.slice(1)}`] === 'function') {
         window[`load${page.charAt(0).toUpperCase() + page.slice(1)}`]();
@@ -3118,6 +3120,8 @@ async function openAssignTriage(triageId) {
         if (t.status !== 'Triaged') { showToast('Only Triaged files can be assigned', 'error'); return; }
 
         $('#assignTriageId').value = triageId;
+        $('#assignValueClassification').value = t.value_classification || 'Low';
+        $('#assignComplexity').value = t.complexity || 'Low';
         $('#assignTriageInfo').innerHTML = `
             <div class="triage-assign-summary">
                 <strong>${escHtml(t.pr_number)}</strong> — ${escHtml(t.title)}<br>
@@ -3133,8 +3137,9 @@ async function openAssignTriage(triageId) {
         // Populate officer select
         const officers = await api('/api/officers');
         $('#assignTriageOfficer').innerHTML = officers.map(o =>
-            `<option value="${o.id}">${escapeHtml(o.name)}${escapeHtml(o.team_name ? ' (' + o.team_name + ')' : '')}</option>`
+            `<option value="${o.id}" data-classification="${escapeHtml(o.officer_classification || '')}">${escapeHtml(o.name)} — ${escapeHtml(o.officer_classification || 'Unclassified')}${escapeHtml(o.team_name ? ' (' + o.team_name + ')' : '')}</option>`
         ).join('');
+        updateAssignmentRecommendation();
 
         openModal('modalAssignTriage');
     } catch (err) { showToast(err.message, 'error'); }
@@ -3144,12 +3149,20 @@ $('#formAssignTriage').addEventListener('submit', async (e) => {
     e.preventDefault();
     const triageId = $('#assignTriageId').value;
     try {
+        await api(`/api/team-leadership/triage/${triageId}/classification`, {
+            method: 'PUT',
+            body: JSON.stringify({
+                value_classification: $('#assignValueClassification').value,
+                complexity: $('#assignComplexity').value
+            })
+        });
         await api(`/api/triage/${triageId}/assign`, {
             method: 'POST',
             body: JSON.stringify({
                 officer_id: parseInt($('#assignTriageOfficer').value),
                 process_name: $('#assignTriageProcess').value,
-                assigned_date: $('#assignTriageDate').value || undefined
+                assigned_date: $('#assignTriageDate').value || undefined,
+                override_rationale: $('#assignOverrideRationale').value
             })
         });
         closeModal();
@@ -3158,6 +3171,18 @@ $('#formAssignTriage').addEventListener('submit', async (e) => {
         loadTriage();
     } catch (err) { showToast(err.message, 'error'); }
 });
+
+function updateAssignmentRecommendation() {
+    const value = $('#assignValueClassification').value;
+    const complexity = $('#assignComplexity').value;
+    const recommendation = value === 'High' && complexity === 'High'
+        ? 'PG-4' : value === 'Low' && complexity === 'Low' ? 'PG-2' : 'PG-3';
+    const selected = $('#assignTriageOfficer').selectedOptions[0]?.dataset.classification || 'Unclassified';
+    $('#assignRecommendation').textContent = `Recommended: ${recommendation}. Selected officer: ${selected}.`;
+}
+
+['assignValueClassification', 'assignComplexity', 'assignTriageOfficer'].forEach(id =>
+    $(`#${id}`).addEventListener('change', updateAssignmentRecommendation));
 
 // ===== SLA Check =====
 $('#btnCheckSLA').addEventListener('click', async () => {
@@ -4739,4 +4764,186 @@ $('#btnExportSLA')?.addEventListener('click', async () => {
         $('#btnExportSLA').disabled = false;
         $('#btnExportSLA').innerHTML = 'Export SLA Report';
     }
+});
+
+// ===== PG-5 Team Leadership =====
+let teamLeadershipOfficers = [];
+
+function teamLeadershipOptions(rows) {
+    return rows.map(o => `<option value="${o.id}">${escapeHtml(o.name)} — ${escapeHtml(o.officer_classification || 'Unclassified')}</option>`).join('');
+}
+
+async function loadTeamLeadership() {
+    if (!currentUser || !['admin', 'team_leader', 'officer'].includes(currentUser.role)) return;
+    const error = $('#teamLeadershipError');
+    error.style.display = 'none';
+    try {
+        if (currentUser.role === 'officer') {
+            const [reviews, filesPayload, metadata] = await Promise.all([
+                api('/api/team-leadership/reviews'),
+                api('/api/files?status=Active&limit=500'),
+                api('/api/team-leadership/metadata')
+            ]);
+            const files = normalizeFilesResponse(filesPayload).filter(file => file.status === 'Active');
+            $('#tlReviewFile').innerHTML = files.map(file =>
+                `<option value="${file.id}">${escapeHtml(file.pr_number)} — ${escapeHtml(file.title)}</option>`
+            ).join('');
+            $('#tlReviewGate').innerHTML = metadata.review_gates.map(gate =>
+                `<option value="${escapeHtml(gate)}">${escapeHtml(gate)}</option>`
+            ).join('');
+            $('#tlReviewsBody').innerHTML = reviews.length ? reviews.map(review => {
+                const control = review.status === 'returned'
+                    ? `<button class="btn btn-primary btn-sm" onclick="resubmitPg5Review(${review.id})">Resubmit</button>`
+                    : `<span class="badge">${escapeHtml(review.status)}</span>`;
+                return `<tr><td>${escapeHtml(review.pr_number)} — ${escapeHtml(review.title)}</td><td>${escapeHtml(review.officer_name)}</td><td>${escapeHtml(review.gate)}</td><td>${control}</td><td>${new Date(review.updated_at).toLocaleDateString()}</td></tr>`;
+            }).join('') : '<tr><td colspan="5">No PG-5 reviews.</td></tr>';
+            return;
+        }
+
+        const [summary, reviews, checkins, actions, checkpoints, officers] = await Promise.all([
+            api('/api/team-leadership/management-summary'),
+            api('/api/team-leadership/reviews'),
+            api('/api/team-leadership/weekly-checkins'),
+            api('/api/team-leadership/business-owner-actions'),
+            api('/api/team-leadership/performance-checkpoints'),
+            api('/api/officers')
+        ]);
+        teamLeadershipOfficers = officers || [];
+        $('#tlActiveFiles').textContent = summary.portfolio.active;
+        $('#tlPendingReviews').textContent = summary.reviews.pending;
+        $('#tlOpenActions').textContent = summary.actions.open;
+
+        const officerOptions = teamLeadershipOptions(teamLeadershipOfficers);
+        ['tlClassificationOfficer', 'tlCheckinOfficer', 'tlCheckpointOfficer'].forEach(id => {
+            $(`#${id}`).innerHTML = officerOptions;
+        });
+        const teams = [...new Map(teamLeadershipOfficers.filter(o => o.team_id).map(o => [o.team_id, o.team_name || `Team ${o.team_id}`])).entries()];
+        $('#tlActionTeam').innerHTML = teams.map(([id, name]) => `<option value="${id}">${escapeHtml(name)}</option>`).join('');
+
+        $('#tlReviewsBody').innerHTML = reviews.length ? reviews.map(r => {
+            const choices = r.status === 'returned'
+                ? [] : ['reviewing', 'returned', 'conditionally cleared', 'cleared', 'escalated'];
+            const controls = choices.length && !['cleared', 'conditionally cleared', 'escalated'].includes(r.status)
+                ? `<select class="select-input" onchange="updatePg5Review(${r.id}, this.value)"><option value="">${escapeHtml(r.status)}</option>${choices.filter(s => s !== r.status).map(s => `<option value="${s}">${escapeHtml(s)}</option>`).join('')}</select>`
+                : `<span class="badge">${escapeHtml(r.status)}</span>`;
+            return `<tr><td>${escapeHtml(r.pr_number)} — ${escapeHtml(r.title)}</td><td>${escapeHtml(r.officer_name)}</td><td>${escapeHtml(r.gate)}</td><td>${controls}</td><td>${new Date(r.updated_at).toLocaleDateString()}</td></tr>`;
+        }).join('') : '<tr><td colspan="5">No PG-5 reviews.</td></tr>';
+
+        $('#tlCheckinsList').innerHTML = checkins.length ? checkins.map(c =>
+            `<div class="notification-item"><strong>${escapeHtml(c.officer_name)} · ${new Date(c.week_start).toLocaleDateString()}</strong><p>${escapeHtml(c.operational_summary)}</p><small>Blockers: ${escapeHtml(c.blockers || 'None')} · Decisions: ${escapeHtml(c.decisions || 'None')} · Actions: ${escapeHtml(c.actions || 'None')}</small></div>`
+        ).join('') : '<p class="form-hint">No weekly check-ins.</p>';
+        $('#tlOwnerActionsList').innerHTML = actions.length ? actions.map(a => {
+            const completed = Boolean(a.completed_at);
+            return `<div class="notification-item"><strong>${escapeHtml(a.business_owner)} · ${new Date(a.action_month).toLocaleDateString()}</strong><p>${escapeHtml(a.action)}</p><small>Due: ${a.due_date ? new Date(a.due_date).toLocaleDateString() : 'Not scheduled'} · ${completed ? 'Completed' : 'Open'}</small><div style="margin-top:8px;"><button class="btn btn-secondary btn-sm" onclick="completeBusinessOwnerAction(${a.id}, ${!completed})">${completed ? 'Reopen' : 'Complete'}</button></div></div>`;
+        }).join('') : '<p class="form-hint">No monthly owner actions.</p>';
+        $('#tlCheckpointsList').innerHTML = checkpoints.length ? checkpoints.map(p =>
+            `<div class="notification-item"><strong>${escapeHtml(p.officer_name)} · ${escapeHtml(p.checkpoint_type)} ${p.year}</strong><p>Due ${new Date(p.due_date).toLocaleDateString()}</p><small>Completed: ${p.completion_date || '—'} · HR record: ${p.hr_record_date || '—'} · Follow-up: ${p.followup_date || '—'}</small></div>`
+        ).join('') : '<p class="form-hint">No performance checkpoints scheduled.</p>';
+        $('#tlCheckpointYear').value ||= new Date().getFullYear();
+    } catch (err) {
+        error.textContent = err.message;
+        error.style.display = 'block';
+    }
+}
+
+async function updatePg5Review(reviewId, status) {
+    if (!status) return;
+    try {
+        const note = window.prompt(`Decision note for ${status} (optional):`) || '';
+        await api(`/api/team-leadership/reviews/${reviewId}/status`, {
+            method: 'PUT', body: JSON.stringify({ status, decision_note: note })
+        });
+        showToast('Review updated');
+        loadTeamLeadership();
+    } catch (err) { showToast(err.message, 'error'); }
+}
+window.updatePg5Review = updatePg5Review;
+
+async function resubmitPg5Review(reviewId) {
+    const note = window.prompt('Describe what changed for resubmission:');
+    if (note === null) return;
+    try {
+        await api(`/api/team-leadership/reviews/${reviewId}/status`, {
+            method: 'PUT', body: JSON.stringify({ status: 'resubmitted', submission_note: note })
+        });
+        showToast('Review resubmitted');
+        loadTeamLeadership();
+    } catch (err) { showToast(err.message, 'error'); }
+}
+window.resubmitPg5Review = resubmitPg5Review;
+
+async function completeBusinessOwnerAction(actionId, completed) {
+    try {
+        await api(`/api/team-leadership/business-owner-actions/${actionId}/status`, {
+            method: 'PUT', body: JSON.stringify({ completed })
+        });
+        showToast(completed ? 'Action completed' : 'Action reopened');
+        loadTeamLeadership();
+    } catch (err) { showToast(err.message, 'error'); }
+}
+window.completeBusinessOwnerAction = completeBusinessOwnerAction;
+
+$('#formPg5ReviewSubmission')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+        await api('/api/team-leadership/reviews', { method: 'POST', body: JSON.stringify({
+            file_id: Number($('#tlReviewFile').value), gate: $('#tlReviewGate').value,
+            submission_note: $('#tlReviewSubmissionNote').value
+        }) });
+        $('#tlReviewSubmissionNote').value = '';
+        showToast('Review submitted');
+        loadTeamLeadership();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+$('#formOfficerClassification')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+        await api(`/api/team-leadership/officers/${$('#tlClassificationOfficer').value}/classification`, {
+            method: 'PUT', body: JSON.stringify({ classification: $('#tlOfficerClassification').value })
+        });
+        showToast('Officer classification saved');
+        loadTeamLeadership();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+$('#formWeeklyCheckin')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+        await api('/api/team-leadership/weekly-checkins', { method: 'POST', body: JSON.stringify({
+            officer_id: Number($('#tlCheckinOfficer').value), week_start: $('#tlCheckinWeek').value,
+            operational_summary: $('#tlOperationalSummary').value, blockers: $('#tlBlockers').value,
+            decisions: $('#tlDecisions').value, actions: $('#tlActions').value
+        }) });
+        showToast('Weekly check-in saved');
+        loadTeamLeadership();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+$('#formOwnerAction')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+        await api('/api/team-leadership/business-owner-actions', { method: 'POST', body: JSON.stringify({
+            team_id: Number($('#tlActionTeam').value), business_owner: $('#tlBusinessOwner').value,
+            action_month: `${$('#tlActionMonth').value}-01`, action: $('#tlOwnerAction').value,
+            due_date: $('#tlOwnerActionDue').value || null
+        }) });
+        showToast('Business-owner action added');
+        loadTeamLeadership();
+    } catch (err) { showToast(err.message, 'error'); }
+});
+
+$('#formPerformanceCheckpoint')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+        await api('/api/team-leadership/performance-checkpoints', { method: 'POST', body: JSON.stringify({
+            officer_id: Number($('#tlCheckpointOfficer').value), year: Number($('#tlCheckpointYear').value),
+            checkpoint_type: $('#tlCheckpointType').value, due_date: $('#tlCheckpointDue').value,
+            completion_date: $('#tlCheckpointCompletion').value || null,
+            hr_record_date: $('#tlCheckpointHr').value || null,
+            followup_date: $('#tlCheckpointFollowup').value || null
+        }) });
+        showToast('Performance checkpoint schedule saved');
+        loadTeamLeadership();
+    } catch (err) { showToast(err.message, 'error'); }
 });
