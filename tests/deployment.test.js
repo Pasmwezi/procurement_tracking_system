@@ -8,7 +8,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 test('production compose requires a digest-pinned application image without a build override', () => {
     const compose = read('docker-compose.yml');
-    assert.match(compose, /image:\s*pasmwezi\/procurement_tracking_system@\$\{APP_IMAGE_DIGEST:\?[^}]+\}/);
+    assert.match(compose, /image:\s*amipabu\/procurement_tracking_system@\$\{APP_IMAGE_DIGEST:\?[^}]+\}/);
     assert.doesNotMatch(compose, /^\s+build:/m);
     assert.match(compose, /read_only:\s*true/);
     assert.match(compose, /cap_drop:\s*\n\s*- ALL/);

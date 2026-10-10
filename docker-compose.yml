@@ -24,7 +24,7 @@ services:
       - app-network
 
   app:
-    image: pasmwezi/procurement_tracking_system@${APP_IMAGE_DIGEST:?APP_IMAGE_DIGEST must be set to a sha256 digest}
+    image: amipabu/procurement_tracking_system@${APP_IMAGE_DIGEST:?APP_IMAGE_DIGEST must be set to a sha256 digest}
     restart: unless-stopped
     read_only: true
     tmpfs:

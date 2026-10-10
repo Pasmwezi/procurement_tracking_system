@@ -154,10 +154,10 @@ export ADMIN_INITIAL_EMAIL="admin@example.ca"
 export ADMIN_INITIAL_PASSWORD="$(openssl rand -base64 36)"
 
 # Build and publish a release image, then pin Compose to the registry digest.
-docker build -t pasmwezi/procurement_tracking_system:RELEASE .
-docker push pasmwezi/procurement_tracking_system:RELEASE
+docker build -t amipabu/procurement_tracking_system:RELEASE .
+docker push amipabu/procurement_tracking_system:RELEASE
 export APP_IMAGE_DIGEST="$(docker buildx imagetools inspect \
-  pasmwezi/procurement_tracking_system:RELEASE --format '{{.Manifest.Digest}}')"
+  amipabu/procurement_tracking_system:RELEASE --format '{{.Manifest.Digest}}')"
 docker compose up -d --wait
 ```
 
